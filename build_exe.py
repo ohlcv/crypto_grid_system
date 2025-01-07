@@ -189,7 +189,7 @@ def build_exe():
     
     datas = [
         (str(cert_file), 'certifi'),
-        (str(icons_dir), os.path.join('ui', 'icons')),
+        (str(icons_dir), os.path.join('src', 'ui', 'icons')),
     ]
     
     for src, dst in datas:

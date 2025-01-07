@@ -678,7 +678,10 @@ class GridTrader(QObject):
             is_spot = self.grid_data.inst_type == "SPOT"
 
             # 使用实际成交量
-            order_size = float(level_config.filled_amount)
+            if not is_spot:
+                order_size = float(level_config.filled_amount / self.grid_data.last_price)
+            else:
+                order_size = float(level_config.invest_amount / self.grid_data.last_price)
             print(f"[GridTrader] 止盈订单详情:")
             print(f"  网格层级: {level}")
             print(f"  方向: {'卖出' if is_long else '买入'}")
