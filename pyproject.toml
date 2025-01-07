@@ -1,0 +1,111 @@
+[project]
+name = "crypto-grid-trading"
+version = "1.0.0"
+description = "基于qtpy的加密货币网格交易系统"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "ohlcv", email = "24369961@qq.com"}
+]
+
+# 主要依赖，这些依赖会在安装项目时自动安装
+dependencies = [
+    # Qt相关依赖
+    "PySide6>=6.4.0",    # Qt框架的Python绑定
+    "qtpy>=2.3.0",       # Qt兼容层
+    "qt-material>=2.14",  # Material设计主题
+
+    # 网络相关依赖
+    "requests>=2.28.0",   # HTTP请求
+    "websocket-client>=1.6.1",  # WebSocket客户端
+    "websockets>=10.4",   # WebSocket支持
+    "certifi>=2023.7.22", # SSL证书支持
+
+    # 数据处理相关
+    "numpy>=1.24.0",      # 数值计算
+    "pandas>=2.0.0",      # 数据处理
+    "python-dateutil>=2.8.2",  # 日期处理
+
+    # 工具类依赖
+    "typing-extensions>=4.5.0",  # 类型提示扩展
+    "toml>=0.10.2",      # TOML配置文件支持
+    "pyinstaller>=5.13.0",  # 应用打包工具
+]
+
+# 可选依赖，仅在开发时需要
+[project.optional-dependencies]
+dev = [
+    # 测试工具
+    "pytest>=7.0.0",
+    "pytest-qt>=4.2.0",
+    "pytest-cov>=4.1.0",
+    
+    # 代码质量工具
+    "black>=22.3.0",     # 代码格式化
+    "isort>=5.10.1",     # import排序
+    "flake8>=6.0.0",     # 代码检查
+    "mypy>=1.0.0",       # 类型检查
+]
+
+# 构建系统配置
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# PyInstaller配置
+[tool.pyinstaller]
+console = false          # GUI应用，不显示控制台
+onedir = true           # 单目录模式打包
+clean = true            # 每次打包前清理
+paths = ["src"]         # 源代码路径
+icon = "src/ui/icons/bitcoin.ico"  # 应用图标
+
+# 需要包含的隐藏导入
+hidden-imports = [
+    "websocket",
+    "websocket._app",
+    "websocket._core",
+    "websocket._exceptions",
+    "websocket._handshake",
+    "websocket._http",
+    "websocket._logging",
+    "websocket._socket",
+    "websocket._utils",
+    "websocket._url",
+    "qtpy",
+    "shiboken6",
+    "qt_material",
+    "numpy",
+    "pandas",
+    "certifi",
+]
+
+# 测试配置
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+filterwarnings = ["ignore::DeprecationWarning"]
+addopts = "-v --cov=src --cov-report=term-missing"
+
+# 代码格式化配置
+[tool.black]
+line-length = 100
+target-version = ["py38"]
+include = '\.pyi?$'
+extend-exclude = '''
+# A regex preceded with ^/ will apply only to files and directories
+# in the root of the project.
+^/build/
+^/dist/
+'''
+
+# Import排序配置
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+line_length = 100

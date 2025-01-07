@@ -1,0 +1,7 @@
+pycryptodome==3.21.0
+pyinstaller==6.7.0
+qtpy==6.8.0
+qtpy_sip==13.9.0
+qt_material==2.14
+QtPy==2.4.2
+Requests==2.32.3
