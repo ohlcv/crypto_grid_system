@@ -166,7 +166,7 @@ def build_exe():
         'main.py',
         f'--name=crypto-grid-trading',
         '--onedir',
-        '--windowed',
+        # '--windowed',
         '--noconfirm',
         '--clean',
         f'--distpath={build_dir / "dist"}',
@@ -232,7 +232,7 @@ def build_exe():
             
             # 验证关键文件
             cert_path = dist_path / 'certifi' / 'cacert.pem'
-            icons_path = dist_path / 'ui' / 'icons'
+            icons_path = dist_path / 'src' / 'ui' / 'icons'
             
             if cert_path.exists():
                 logger.info(f"SSL证书文件已包含: {cert_path}")

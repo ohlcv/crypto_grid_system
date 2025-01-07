@@ -225,14 +225,14 @@ class GridStrategyTab(QWidget):
                 if not ws_status['private']:
                     details.append("私有WebSocket未连接或验证失败")
 
-                error_msg = f"API连接测试失败\n原因: {result['message']}"
+                error_msg = f"API连接测试失败,请检查后重新保存！\n原因: {result['message']}"
                 if details:
                     error_msg += f"\n详细: {', '.join(details)}"
                 self.show_error_message(error_msg)
                 # 重置客户端
-                print("[GridStrategyTab] 测试失败，重置客户端")
-                exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
-                self._reset_and_create_client(self.config, exchange_type)
+                # print("[GridStrategyTab] 测试失败，重置客户端")
+                # exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+                # self._reset_and_create_client(self.config, exchange_type)
         except Exception as e:
             print(f"[GridStrategyTab] 测试连接错误: {e}")
             self.show_error_message(f"测试连接失败: {str(e)}")
