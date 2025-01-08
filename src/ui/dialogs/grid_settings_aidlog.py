@@ -3,7 +3,8 @@ from decimal import Decimal
 import uuid
 from qtpy.QtWidgets import (
     QDialog, QVBoxLayout, QTableWidget, QLineEdit, QPushButton, QHBoxLayout,
-    QMessageBox, QLabel, QHeaderView, QTableWidgetItem, QMenu, QSizePolicy, QWidget
+    QMessageBox, QLabel, QHeaderView, QTableWidgetItem, QMenu, QSizePolicy, 
+    QWidget, QGroupBox, QGridLayout, QCheckBox
 )
 from qtpy.QtGui import QIntValidator, QDoubleValidator, QAction
 from qtpy.QtCore import Qt
@@ -204,36 +205,83 @@ class GridDialog(QDialog):
         self.load_grid_data()  # 加载已有的网格数据
 
     def setup_ui(self):
-        """设置UI布局"""
+        """设置UI界面"""
         layout = QVBoxLayout()
 
         # === 网格表格 ===
         self.table = GridSetting()
         layout.addWidget(self.table)
 
-        # === 输入框和按钮布局 ===
+        # === 第一行输入框：预算和层数等 ===
         input_layout = QHBoxLayout()
-        self.budget_input = self.create_input_field("预算资金 (USDT)", QDoubleValidator(0.0, 9999999.99, 3))
-        self.grid_layers_input = self.create_input_field("层数", QIntValidator(1, 1000))
-        self.build_interval_input = self.create_input_field("间隔%", QDoubleValidator(0.0, 100.0, 3))
-        self.take_profit_input = self.create_input_field("止盈%", QDoubleValidator(0.0, 100.0, 3))
-        self.open_rebound_input = self.create_input_field("开仓反弹%", QDoubleValidator(0.0, 100.0, 3))
-        self.close_rebound_input = self.create_input_field("平仓反弹%", QDoubleValidator(0.0, 100.0, 3))
+        input_layout.setSpacing(5)  # 控件之间的间隔
 
-        # 布局输入框
+        # 预算
+        self.budget_input = self.create_input_field("预算资金 (USDT)", QDoubleValidator(0.0, 9999999.99, 3))
         input_layout.addWidget(QLabel("预算:"))
         input_layout.addWidget(self.budget_input)
+
+        # 层数
+        self.grid_layers_input = self.create_input_field("层数", QIntValidator(1, 1000))
         input_layout.addWidget(QLabel("层数:"))
         input_layout.addWidget(self.grid_layers_input)
+
+        # 间隔%
+        self.build_interval_input = self.create_input_field("间隔%", QDoubleValidator(0.0, 100.0, 3))
         input_layout.addWidget(QLabel("间隔%:"))
         input_layout.addWidget(self.build_interval_input)
+
+        # 止盈%
+        self.take_profit_input = self.create_input_field("止盈%", QDoubleValidator(0.0, 100.0, 3))
         input_layout.addWidget(QLabel("止盈%:"))
         input_layout.addWidget(self.take_profit_input)
+
+        # 开仓反弹%
+        self.open_rebound_input = self.create_input_field("开仓反弹%", QDoubleValidator(0.0, 100.0, 3))
         input_layout.addWidget(QLabel("开仓反弹%:"))
         input_layout.addWidget(self.open_rebound_input)
+
+        # 平仓反弹%
+        self.close_rebound_input = self.create_input_field("平仓反弹%", QDoubleValidator(0.0, 100.0, 3))
         input_layout.addWidget(QLabel("平仓反弹%:"))
         input_layout.addWidget(self.close_rebound_input)
+
         layout.addLayout(input_layout)
+
+        # === 第二行：总体止盈止损设置 ===
+        tp_sl_layout = QHBoxLayout()
+        tp_sl_layout.setSpacing(10)  # 设置组件之间的间距为10像素
+
+        # 止盈设置（靠左）
+        self.tp_enabled = QCheckBox("启用总体止盈")
+        tp_sl_layout.addWidget(self.tp_enabled)
+                
+        self.tp_amount = QLineEdit()
+        self.tp_amount.setValidator(QDoubleValidator(0.0, 999999.99, 2))
+        self.tp_amount.setPlaceholderText("止盈金额(USDT)")
+        self.tp_amount.setFixedWidth(120)  # 固定输入框宽度
+        self.tp_amount.setEnabled(False)
+        tp_sl_layout.addWidget(self.tp_amount)
+
+        # 止损设置
+        self.sl_enabled = QCheckBox("启用总体止损")
+        tp_sl_layout.addWidget(self.sl_enabled)
+
+        self.sl_amount = QLineEdit()
+        self.sl_amount.setValidator(QDoubleValidator(0.0, 999999.99, 2))
+        self.sl_amount.setPlaceholderText("止损金额(USDT)")
+        self.sl_amount.setFixedWidth(120)  # 固定输入框宽度
+        self.sl_amount.setEnabled(False)
+        tp_sl_layout.addWidget(self.sl_amount)
+
+        # 添加弹性空间，将上面的组件推到左边
+        tp_sl_layout.addStretch(1)
+
+        # 连接信号
+        self.tp_enabled.toggled.connect(self._on_tp_toggled)
+        self.sl_enabled.toggled.connect(self._on_sl_toggled)
+
+        layout.addLayout(tp_sl_layout)
 
         # === 按钮布局 ===
         button_layout = QHBoxLayout()
@@ -245,7 +293,7 @@ class GridDialog(QDialog):
         button_layout.addWidget(self.save_grid_button)
         layout.addLayout(button_layout)
 
-        # === 单独一行的 + 按钮 ===
+        # === 添加行按钮 ===
         add_row_button_layout = QHBoxLayout()
         self.add_row_button = QPushButton("+")
         self.add_row_button.clicked.connect(lambda: self.table.add_row())
@@ -253,6 +301,18 @@ class GridDialog(QDialog):
         layout.addLayout(add_row_button_layout)
 
         self.setLayout(layout)
+
+    def _on_tp_toggled(self, checked: bool):
+        """处理止盈复选框状态变化"""
+        self.tp_amount.setEnabled(checked)
+        if not checked:
+            self.tp_amount.clear()
+
+    def _on_sl_toggled(self, checked: bool):
+        """处理止损复选框状态变化"""
+        self.sl_amount.setEnabled(checked)
+        if not checked:
+            self.sl_amount.clear()
 
     def create_input_field(self, placeholder_text, validator):
         """创建带有验证器的输入框"""
@@ -323,101 +383,130 @@ class GridDialog(QDialog):
 
     def load_grid_data(self):
         """加载网格数据到表格"""
-        # print("[GridSetting] === 加载网格数据 ===")
+        # 加载网格层数据
         self.table.clear_table()
         for level, config in self.grid_data.grid_levels.items():
             self.table.add_row({
                 "间隔%": str(config.interval_percent),
                 "止盈%": str(config.take_profit_percent),
-                "开仓反弹%": str(config.open_rebound_percent),  # 修改
-                "平仓反弹%": str(config.close_rebound_percent),  # 修改
+                "开仓反弹%": str(config.open_rebound_percent),
+                "平仓反弹%": str(config.close_rebound_percent),
                 "成交额": str(config.invest_amount),
                 "成交量": str(config.filled_amount) if config.filled_amount else "",
                 "开仓价": str(config.filled_price) if config.filled_price else "",
                 "开仓时间": config.filled_time.strftime("%m-%d %H:%M") if config.filled_time else "",
                 "已开仓": "是" if config.is_filled else "否",
             })
-        #     print(f"[GridSetting] 加载第 {level} 层配置")
-        print("[GridSetting] === 网格数据加载完成 ===")
+            
+        # 加载总体止盈止损设置
+        self.tp_enabled.setChecked(self.grid_data.take_profit_config.enabled)
+        if self.grid_data.take_profit_config.profit_amount is not None:
+            self.tp_amount.setText(str(self.grid_data.take_profit_config.profit_amount))
+            
+        self.sl_enabled.setChecked(self.grid_data.stop_loss_config.enabled)
+        if self.grid_data.stop_loss_config.loss_amount is not None:
+            self.sl_amount.setText(str(self.grid_data.stop_loss_config.loss_amount))
 
     def save_grid(self):
         """保存网格设置并同步到后台数据结构"""
-        # print("[GridSetting] === 保存网格设置 ===")
-        valid_existing_rows = []  # 已开仓的行
-        valid_new_rows = []      # 未开仓的有效行
-        
-        # 收集和验证行数据
-        for row in range(self.table.rowCount()):
-            # 获取该行数据
-            row_data = {
-                "已开仓": self.table.get_cell_value(row, self.table.column_indices["已开仓"]),
-                "间隔%": self.table.get_cell_value(row, self.table.column_indices["间隔%"]),
-                "止盈%": self.table.get_cell_value(row, self.table.column_indices["止盈%"]),
-                "开仓反弹%": self.table.get_cell_value(row, self.table.column_indices["开仓反弹%"]),
-                "平仓反弹%": self.table.get_cell_value(row, self.table.column_indices["平仓反弹%"]),
-                "成交额": self.table.get_cell_value(row, self.table.column_indices["成交额"]),
-                "成交量": self.table.get_cell_value(row, self.table.column_indices["成交量"]),
-                "开仓价": self.table.get_cell_value(row, self.table.column_indices["开仓价"]),
-                "开仓时间": self.table.get_cell_value(row, self.table.column_indices["开仓时间"])
-            }
+        try:
+            valid_existing_rows = []  # 已开仓的行
+            valid_new_rows = []      # 未开仓的有效行
             
-            if row_data["已开仓"] == "是":
-                valid_existing_rows.append(row_data)
-            else:
-                # 验证未开仓行的必填参数
-                required_fields = ["间隔%", "止盈%", "开仓反弹%", "平仓反弹%", "成交额"]
-                if all(row_data.get(field) for field in required_fields):
-                    valid_new_rows.append(row_data)
-        ui_logger.debug(f"[GridSetting] 已开仓行数: {len(valid_existing_rows)} {valid_existing_rows}")
-        ui_logger.debug(f"[GridSetting] 新增有效行数: {len(valid_new_rows)} {valid_new_rows}")
-
-        # 如果删除了所有行（包括已开仓的），重置 GridData
-        if len(valid_existing_rows) == 0 and len(valid_new_rows) == 0:
-            # 重置 GridData 到完全初始状态
-            self.grid_data.reset_to_initial()
-            ui_logger.info("[GridSetting] 重置 GridData 到初始状态")
-        else:
-            # 保留已开仓的配置, 清除所有未开仓配置
-            unfilled_levels = [
-                level for level, config in self.grid_data.grid_levels.items()
-                if not config.is_filled
-            ]
-            for level in unfilled_levels:
-                del self.grid_data.grid_levels[level]
-                print(f"[GridSetting] 删除旧的未开仓层级 {level}")
-
-            # 添加新的未开仓配置
-            max_level = max(self.grid_data.grid_levels.keys(), default=-1)
-            next_level = max_level + 1
-            
-            for row_data in valid_new_rows:
-                level_config = {
-                    "间隔%": row_data["间隔%"],
-                    "止盈%": row_data["止盈%"],
-                    "开仓反弹%": row_data["开仓反弹%"],
-                    "平仓反弹%": row_data["平仓反弹%"],
-                    "成交额": row_data["成交额"]
+            # 收集和验证网格层数据
+            for row in range(self.table.rowCount()):
+                row_data = {
+                    "已开仓": self.table.get_cell_value(row, self.table.column_indices["已开仓"]),
+                    "间隔%": self.table.get_cell_value(row, self.table.column_indices["间隔%"]),
+                    "止盈%": self.table.get_cell_value(row, self.table.column_indices["止盈%"]),
+                    "开仓反弹%": self.table.get_cell_value(row, self.table.column_indices["开仓反弹%"]),
+                    "平仓反弹%": self.table.get_cell_value(row, self.table.column_indices["平仓反弹%"]),
+                    "成交额": self.table.get_cell_value(row, self.table.column_indices["成交额"]),
+                    "成交量": self.table.get_cell_value(row, self.table.column_indices["成交量"]),
+                    "开仓价": self.table.get_cell_value(row, self.table.column_indices["开仓价"]),
+                    "开仓时间": self.table.get_cell_value(row, self.table.column_indices["开仓时间"])
                 }
-                # print(f"[GridSetting] 添加第 {next_level} 层配置")
-                self.grid_data.update_level(next_level, level_config)
-                next_level += 1
+                
+                if row_data["已开仓"] == "是":
+                    valid_existing_rows.append(row_data)
+                else:
+                    required_fields = ["间隔%", "止盈%", "开仓反弹%", "平仓反弹%", "成交额"]
+                    if all(row_data.get(field) for field in required_fields):
+                        valid_new_rows.append(row_data)
 
+            # 保存总体止盈止损设置
+            tp_amount = None
+            sl_amount = None
+            
+            # 保存止盈设置
+            if self.tp_enabled.isChecked():
+                if not self.tp_amount.text().strip():
+                    raise ValueError("请输入总体止盈金额")
+                tp_amount = Decimal(self.tp_amount.text())
+                if tp_amount <= 0:
+                    raise ValueError("总体止盈金额必须大于0")
+                self.grid_data.take_profit_config.enable(tp_amount)
+            else:
+                self.grid_data.take_profit_config.disable()
+                
+            # 保存止损设置
+            if self.sl_enabled.isChecked():
+                if not self.sl_amount.text().strip():
+                    raise ValueError("请输入总体止损金额")
+                sl_amount = Decimal(self.sl_amount.text())
+                if sl_amount <= 0:
+                    raise ValueError("总体止损金额必须大于0")
+                self.grid_data.stop_loss_config.enable(sl_amount)
+            else:
+                self.grid_data.stop_loss_config.disable()
+
+            # 处理网格层数据
+            if len(valid_existing_rows) == 0 and len(valid_new_rows) == 0:
+                self.grid_data.reset_to_initial()
+            else:
+                unfilled_levels = [
+                    level for level, config in self.grid_data.grid_levels.items()
+                    if not config.is_filled
+                ]
+                for level in unfilled_levels:
+                    del self.grid_data.grid_levels[level]
+
+                max_level = max(self.grid_data.grid_levels.keys(), default=-1)
+                next_level = max_level + 1
+                
+                for row_data in valid_new_rows:
+                    level_config = {
+                        "间隔%": row_data["间隔%"],
+                        "止盈%": row_data["止盈%"],
+                        "开仓反弹%": row_data["开仓反弹%"],
+                        "平仓反弹%": row_data["平仓反弹%"],
+                        "成交额": row_data["成交额"]
+                    }
+                    self.grid_data.update_level(next_level, level_config)
+                    next_level += 1
+                    
+            # 更新网格状态和表格显示
+            grid_status = self.grid_data.get_grid_status()
+            current_level = (f"{grid_status['filled_levels']}/{grid_status['total_levels']}"
+                        if grid_status['is_configured'] else "0/0")
+            
+            # 更新表格显示
+            self.grid_data.row_dict.update({
+                "总体止盈": str(tp_amount) if tp_amount else "-",
+                "总体止损": str(sl_amount) if sl_amount else "-",
+                "当前层数": current_level
+            })
+            
             # 重新加载表格显示
             self.table.setRowCount(0)
             for row_data in valid_existing_rows + valid_new_rows:
                 self.table.add_row(row_data)
 
-        # 更新网格状态
-        grid_status = self.grid_data.get_grid_status()
-        current_level = (f"{grid_status['filled_levels']}/{grid_status['total_levels']}"
-                        if grid_status['is_configured'] else "0/0")
-        print(f"[GridSetting] 更新状态 - 当前层数: {current_level}")
-        print(f"[GridSetting] 网格状态: {grid_status}")
-        
-        # 更新显示数据
-        self.grid_data.row_dict.update({
-            "当前层数": current_level
-        })
-        # 发送数据更新信号
-        self.grid_data.data_updated.emit(self.grid_data.uid)
-        self.accept()
+            # 发送数据更新信号
+            self.grid_data.data_updated.emit(self.grid_data.uid)
+            self.accept()
+            
+        except ValueError as e:
+            QMessageBox.warning(self, "输入错误", str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"保存设置失败: {str(e)}")

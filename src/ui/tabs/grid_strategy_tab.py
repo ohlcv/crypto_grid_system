@@ -57,9 +57,11 @@ class GridStrategyTab(QWidget):
         {"name": "时间戳", "type": "text", "editable": False, "width": 110},
         {"name": "开仓触发价", "type": "text", "editable": False, "width": 110},
         {"name": "止盈触发价", "type": "text", "editable": False, "width": 110},
+        {"name": "持仓均价", "type": "text", "editable": False, "width": 100},
         {"name": "持仓价值", "type": "text", "editable": False, "width": 100},
         {"name": "持仓盈亏", "type": "text", "editable": False, "width": 100},
-        {"name": "持仓均价", "type": "text", "editable": False, "width": 100},
+        {"name": "总体止盈", "type": "text", "editable": False, "width": 100},  # 修改
+        {"name": "总体止损", "type": "text", "editable": False, "width": 100},  # 修改
         {"name": "交易所", "type": "text", "editable": False, "width": 100},
         {"name": "标识符", "type": "text", "editable": False, "width": 100}
     ]

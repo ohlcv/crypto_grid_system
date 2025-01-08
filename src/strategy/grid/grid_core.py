@@ -9,7 +9,76 @@ from datetime import datetime
 from enum import Enum
 from qtpy.QtCore import QObject, Signal
 from src.utils.logger.log_helper import grid_logger
+from decimal import Decimal
+from typing import Optional
 
+
+class TakeProfitConfig:
+    """总体止盈配置"""
+    def __init__(self):
+        self.enabled: bool = False  # 是否启用
+        self.profit_amount: Optional[Decimal] = None  # 止盈金额
+        self._original_config = {}  # 保存原始配置，用于恢复
+
+    def enable(self, profit_amount: Decimal) -> None:
+        """启用止盈"""
+        self.enabled = True
+        self.profit_amount = profit_amount
+
+    def disable(self) -> None:
+        """禁用止盈"""
+        self.enabled = False
+        self.profit_amount = None
+
+    def to_dict(self) -> dict:
+        """转换为字典"""
+        return {
+            'enabled': self.enabled,
+            'profit_amount': float(self.profit_amount) if self.profit_amount else None
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'TakeProfitConfig':
+        """从字典创建实例"""
+        instance = cls()
+        instance.enabled = data.get('enabled', False)
+        profit_amount = data.get('profit_amount')
+        instance.profit_amount = Decimal(str(profit_amount)) if profit_amount is not None else None
+        return instance
+
+class StopLossConfig:
+    """总体止损配置"""
+    def __init__(self):
+        self.enabled: bool = False  # 是否启用
+        self.loss_amount: Optional[Decimal] = None  # 止损金额
+        self._original_config = {}  # 保存原始配置，用于恢复
+
+    def enable(self, loss_amount: Decimal) -> None:
+        """启用止损"""
+        self.enabled = True
+        self.loss_amount = abs(loss_amount)  # 确保为正数
+
+    def disable(self) -> None:
+        """禁用止损"""
+        self.enabled = False
+        self.loss_amount = None
+
+    def to_dict(self) -> dict:
+        """转换为字典"""
+        return {
+            'enabled': self.enabled,
+            'loss_amount': float(self.loss_amount) if self.loss_amount else None
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'StopLossConfig':
+        """从字典创建实例"""
+        instance = cls()
+        instance.enabled = data.get('enabled', False)
+        loss_amount = data.get('loss_amount')
+        instance.loss_amount = Decimal(str(loss_amount)) if loss_amount is not None else None
+        return instance
+    
 class GridDirection(Enum):
     """网格方向"""
     LONG = "long"   # 做多
@@ -40,7 +109,8 @@ class GridData(QObject):
         self.exchange = exchange
         self.inst_type = inst_type
         self.direction = GridDirection.LONG  # 默认做多
-        
+        self.take_profit_config = TakeProfitConfig()
+        self.stop_loss_config = StopLossConfig()
         self.grid_levels: Dict[int, LevelConfig] = {}  # 层号 -> 配置
         self.last_price: Optional[Decimal] = None  # 最新价格
         self.last_update_time: Optional[datetime] = None  # 最后更新时间
@@ -358,6 +428,79 @@ class GridData(QObject):
             print(f"[GridData] 更新层级配置错误: {e}")
             print(f"[GridData] 错误详情: {traceback.format_exc()}")
 
+    def calculate_position_metrics(self) -> dict:
+        """
+        计算持仓相关指标
+        Returns:
+            dict: {
+                'total_value': 持仓总价值,
+                'avg_price': 持仓均价,
+                'unrealized_pnl': 未实现盈亏
+            }
+        """
+        try:
+            if not self.last_price:
+                return {
+                    'total_value': Decimal('0'),
+                    'avg_price': Decimal('0'),
+                    'unrealized_pnl': Decimal('0')
+                }
+
+            total_size = Decimal('0')
+            total_value = Decimal('0')
+            total_cost = Decimal('0')
+            current_price = self.last_price
+
+            # 遍历所有已开仓的网格
+            for level, config in self.grid_levels.items():
+                if config.is_filled and config.filled_amount and config.filled_price:
+                    size = config.filled_amount
+                    entry_price = config.filled_price
+                    
+                    # 累加持仓数量和成本
+                    total_size += size
+                    total_cost += size * entry_price
+
+            # 计算持仓均价
+            avg_price = total_cost / total_size if total_size > 0 else Decimal('0')
+            
+            # 计算当前持仓价值
+            total_value = total_size * current_price if total_size > 0 else Decimal('0')
+            
+            # 计算未实现盈亏
+            if total_size > 0:
+                if self.is_long():
+                    unrealized_pnl = (current_price - avg_price) * total_size
+                else:
+                    unrealized_pnl = (avg_price - current_price) * total_size
+            else:
+                unrealized_pnl = Decimal('0')
+
+            return {
+                'total_value': total_value.quantize(Decimal('0.00')),
+                'avg_price': avg_price.quantize(Decimal('0.0000')),
+                'unrealized_pnl': unrealized_pnl.quantize(Decimal('0.0000'))
+            }
+        except Exception as e:
+            print(f"计算持仓指标错误: {e}")
+            return {
+                'total_value': Decimal('0'),
+                'avg_price': Decimal('0'),
+                'unrealized_pnl': Decimal('0')
+            }
+
+    def check_take_profit_condition(self, unrealized_pnl: Decimal) -> bool:
+        """检查是否达到总体止盈条件"""
+        if not self.take_profit_config.enabled or self.take_profit_config.profit_amount is None:
+            return False
+        return unrealized_pnl >= self.take_profit_config.profit_amount
+
+    def check_stop_loss_condition(self, unrealized_pnl: Decimal) -> bool:
+        """检查是否达到总体止损条件"""
+        if not self.stop_loss_config.enabled or self.stop_loss_config.loss_amount is None:
+            return False
+        return unrealized_pnl <= -self.stop_loss_config.loss_amount
+
     def update_market_data(self, data: dict) -> None:
         """更新市场数据"""
         try:
@@ -366,21 +509,30 @@ class GridData(QObject):
             if not price_str:
                 return   
             new_price = Decimal(str(price_str))
-            # 如果价格没有变化，不更新
-            # if self.last_price == new_price:
-            #     return
             self.last_price = new_price
-            # 更新时间和表格数据
+            
+            # 更新时间
             timestamp = int(data.get("ts", "0"))
             self.last_update_time = datetime.fromtimestamp(timestamp/1000)
+            
+            # 计算持仓指标
+            position_metrics = self.calculate_position_metrics()
+            
+            # 更新表格数据
             self.row_dict.update({
                 "最后价格": str(self.last_price),
                 "最后时间": self.last_update_time.strftime("%H:%M:%S"),
-                "时间戳": timestamp
+                "时间戳": timestamp,
+                "持仓价值": str(position_metrics['total_value']),
+                "持仓均价": str(position_metrics['avg_price']),
+                "持仓盈亏": str(position_metrics['unrealized_pnl'])
             })
+            
+            # 发送更新信号
             self.data_updated.emit(self.uid)
+            
         except Exception as e:
-            print(f"[GridData] 更新市场数据错误: {e}")
+            print(f"更新市场数据错误: {e}")
 
     def get_last_filled_level(self) -> Optional[int]:
         """获取最后一个已成交的层级"""
@@ -389,10 +541,10 @@ class GridData(QObject):
             level for level, config in self.grid_levels.items()
             if config.is_filled
         ]
-        print(f"[GridData] 当前所有已成交层级: {filled_levels}")
+        # print(f"[GridData] 当前所有已成交层级: {filled_levels}")
         if filled_levels:
             last_level = max(filled_levels)
-            print(f"[GridData] 最后已成交的层级: {last_level}")
+            # print(f"[GridData] 最后已成交的层级: {last_level}")
             return last_level
         else:
             print("[GridData] 没有找到任何已成交层级")
@@ -458,6 +610,8 @@ class GridData(QObject):
             "exchange": self.exchange,
             "inst_type": self.inst_type,
             "direction": self.direction.value,
+            'take_profit_config': self.take_profit_config.to_dict(),
+            'stop_loss_config': self.stop_loss_config.to_dict(),
             "grid_levels": {
                 level: {
                     "间隔%": float(config.interval_percent),
@@ -503,5 +657,7 @@ class GridData(QObject):
         
         # 恢复表格数据
         instance.row_dict = data["row_dict"]
+        instance.take_profit_config = TakeProfitConfig.from_dict(data.get('take_profit_config', {}))
+        instance.stop_loss_config = StopLossConfig.from_dict(data.get('stop_loss_config', {}))
         # print(f"[GridData] 反序列化完成: {len(instance.grid_levels)} 层配置")
         return instance

@@ -166,7 +166,7 @@ def build_exe():
         'main.py',
         f'--name=crypto-grid-trading',
         '--onedir',
-        # '--windowed',
+        '--windowed',
         '--noconfirm',
         '--clean',
         f'--distpath={build_dir / "dist"}',

@@ -6,11 +6,13 @@ import traceback
 from threading import Lock
 from typing import Dict, Optional
 from enum import Enum
+from enum import Enum
 
 class LogMode(Enum):
-    CONSOLE_ONLY = "console"      # 仅控制台输出
-    FILE_ONLY = "file"           # 仅文件输出
-    CONSOLE_AND_FILE = "both"    # 同时输出
+    """日志输出模式"""
+    CONSOLE_ONLY = "console_only"      # 仅控制台输出
+    FILE_ONLY = "file_only"            # 仅文件输出
+    CONSOLE_AND_FILE = "console_file"   # 同时输出到控制台和文件
 
 class LogManager:
     _instance = None

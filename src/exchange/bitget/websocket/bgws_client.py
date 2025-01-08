@@ -42,6 +42,7 @@ class BGWebSocketClient(QObject):
             self._ws_client.api_key(api_key)\
                 .api_secret_key(api_secret)\
                 .passphrase(passphrase)
+            self.logger.debug(f"验证私有参数：\n{api_key}\n{api_secret}\n{passphrase}")
         
         # 设置回调
         self._ws_client.listener(self._handle_message)
@@ -69,7 +70,7 @@ class BGWebSocketClient(QObject):
     def _handle_on_open(self):
         """处理WebSocket连接打开事件"""
         self._is_connected = True
-        self.logger.info(f"WebSocket已连接 - is_private: {self._is_private}")
+        print(f"WebSocket已连接 - is_private: {self._is_private}")
         self.connected.emit()
 
     def _handle_error(self, error: str):
@@ -125,7 +126,7 @@ class BGWebSocketClient(QObject):
 
     def _handle_login_response(self, message: dict):
         """处理登录响应"""
-        self.logger.info(f"登录响应: {message}")
+        self.logger.debug(f"登录响应: {message}")
         if message.get("event") == "login":
             self._login_status = message.get("code") == 0
             if self._login_status:

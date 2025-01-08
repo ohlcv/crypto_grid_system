@@ -59,9 +59,9 @@ class BitgetSpotAPI:
         if client_oid:
             params["clientOid"] = client_oid
 
-        self.logger.debug(f"订单参数: {params}")
+        self.logger.info(f"合约-订单-参数: {params}")
         response = self.order_api.placeOrder(params)
-        self.logger.info(f"下单成功 - {response.get('data', {}).get('orderId')}")
+        self.logger.info(f"合约-下单-返回 - {response}")
         return response
 
     @error_handler()
@@ -82,8 +82,9 @@ class BitgetSpotAPI:
             params["limit"] = limit  # 如果传入了 limit，添加到请求中
         if id_less_than is not None:
             params["idLessThan"] = id_less_than  # 如果传入了 id_less_than，添加到请求中
-        # print(f"[BitgetSpotAPI] spot_fills_params: {params}")
+        self.logger.info(f"现货-获取成交明细-参数: {params}")
         response = self.order_api.fills(params)
+        self.logger.info(f"现货-获取成交明细-返回: {response}")
         return response
 
     @error_handler()
@@ -122,9 +123,8 @@ class BitgetMixAPI:
 
     @error_handler()
     def get_account_info(self):
-        self.logger.info("获取合约账户信息")
         response = self.order_api._request_with_params(GET, '/api/v2/spot/account/info', {})
-        self.logger.debug(f"账户信息响应: {response}")
+        self.logger.info(f"账户信息响应: {response}")
         return response
 
     def get_pairs(self, symbol=None, productType="USDT-FUTURES"):
@@ -143,7 +143,7 @@ class BitgetMixAPI:
 
     @error_handler()
     def place_order(self, symbol, size, trade_side, side, price=None, client_oid=None):
-        self.logger.info(f"下合约订单 - {symbol} - {trade_side} - {side} - {size}")
+        self.logger.info(f"合约-下订单 - {symbol} - {trade_side} - {side} - {size}")
         if trade_side not in ["open", "close"]:
             err_msg = "tradeSide 必须为 'open' 或 'close'"
             self.logger.error(err_msg)
@@ -164,14 +164,13 @@ class BitgetMixAPI:
             params["price"] = price
         if client_oid:
             params["clientOid"] = client_oid
-        self.logger.debug(f"订单参数: {params}")
+        self.logger.info(f"合约-订单-参数: {params}")
         response = self.order_api.placeOrder(params)
-        self.logger.info(f"下单成功 - {response.get('data', {}).get('orderId')}")
+        self.logger.info(f"合约-下单-返回 - {response}")
         return response
 
     @error_handler()
     def all_close_positions(self, symbol, hold_side=None):
-        self.logger.info(f"平仓操作 - {symbol} - {hold_side}")
         params = {
             "symbol": symbol,
             "productType": "USDT-FUTURES"
@@ -179,9 +178,9 @@ class BitgetMixAPI:
         if hold_side:
             params["holdSide"] = hold_side
 
-        self.logger.debug(f"平仓参数: {params}")
+        self.logger.info(f"合约-平仓-参数: {params}")
         response = self.order_api.closePositions(params)
-        self.logger.info("平仓成功")
+        self.logger.info(f"合约-平仓-返回: {response}")
         return response
 
     @error_handler()
@@ -204,8 +203,9 @@ class BitgetMixAPI:
             params["limit"] = limit  # 如果传入了 limit，添加到请求中
         if id_less_than is not None:
             params["idLessThan"] = id_less_than  # 如果传入了 id_less_than，添加到请求中
-        # print(f"[BitgetMixAPI] mix_fills_params: {params}")
+        self.logger.info(f"合约-获取成交明细-参数: {params}")
         response = self.order_api.fills(params)
+        self.logger.info(f"合约-获取成交明细-返回: {response}")
         return response
 
     @error_handler()
