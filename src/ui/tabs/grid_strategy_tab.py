@@ -67,7 +67,7 @@ class GridStrategyTab(QWidget):
         {"name": "交易所", "type": "text", "editable": False, "width": 100},
         {"name": "标识符", "type": "text", "editable": False, "width": 100}
     ]
-    ALLOWED_INVITER_IDS = ["5197445181"]  # 允许的邀请人ID列表
+    ALLOWED_INVITER_IDS = ["5197445181", "5176387297"]  # 允许的邀请人ID列表
     def __init__(self, inst_type: str, client_factory: ExchangeClientFactory):
         super().__init__()
         self.logger = ui_logger
@@ -350,7 +350,7 @@ class GridStrategyTab(QWidget):
                 
             # 3. 验证邀请人ID
             if not self.check_inviter_id(response):
-                error_msg = "您使用的不是指定的邀请码！\n请使用 https://partner.bitget.cloud/bg/5BFPY0 注册后使用。"
+                error_msg = "您不是邀请用户\n请使用指定邀请链接注册后使用。"
                 print(f"[GridStrategyTab] Error: {error_msg}")
                 QMessageBox.critical(self, "错误", error_msg)
                 self._reset_api_inputs()
@@ -781,6 +781,7 @@ class GridStrategyTab(QWidget):
         """设置底部按钮布局"""
         button_layout = QHBoxLayout()
         
+        # 左侧按钮
         save_button = QPushButton("保存数据")
         save_button.clicked.connect(lambda: self.save_data())
         
@@ -789,8 +790,19 @@ class GridStrategyTab(QWidget):
         
         button_layout.addWidget(save_button)
         button_layout.addWidget(load_button)
+        
+        # 添加弹性空间,把联系我们推到最右边
         button_layout.addStretch()
         
+        # 添加联系我们标签
+        contact_label = QLabel('联系我们: <a href="https://t.me/BingX01">@BingX01</a>')
+        contact_label.setOpenExternalLinks(True)  # 允许打开外部链接
+        button_layout.addWidget(contact_label)
+
+        invite_label = QLabel('邀请链接: <a href="https://partner.bitget.cloud/bg/5BFPY0">https://partner.bitget.cloud/bg/5BFPY0</a>')
+        invite_label.setOpenExternalLinks(True)  # 允许打开外部链接
+        button_layout.addWidget(invite_label)
+
         return button_layout
 
     def _toggle_api_visibility(self):
