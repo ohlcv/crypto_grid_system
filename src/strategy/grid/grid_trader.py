@@ -11,6 +11,7 @@ from qtpy.QtCore import QObject, Signal
 from src.exchange.base_client import (
     BaseClient, OrderRequest, OrderType, OrderSide, TradeSide
 )
+from src.utils.common.common import adjust_decimal_places
 from .grid_core import GridData, GridDirection
 from src.utils.logger.log_helper import grid_logger, trade_logger
 from src.utils.error.error_handler import error_handler
@@ -594,6 +595,8 @@ class GridTrader(QObject):
         total_amount = Decimal('0')
         total_fee = Decimal('0')
 
+        reference_price = self.grid_data.last_price
+
         if not fills_data:
             self.logger.info("not fills_data")
             return None
@@ -602,8 +605,16 @@ class GridTrader(QObject):
             try:
                 if is_spot:
                     # 现货格式处理
-                    price = Decimal(str(fill.get('priceAvg', '0')))
-                    size = Decimal(str(fill.get('size', '0')))
+                    # price = Decimal(str(fill.get('priceAvg', '0')))
+                    # size = Decimal(str(fill.get('size', '0')))
+                    price = adjust_decimal_places(
+                        fill.get('priceAvg', '0'), 
+                        reference_price
+                    )
+                    size = adjust_decimal_places(
+                        fill.get('size', '0'),
+                        reference_price
+                    )
                     amount = Decimal(str(fill.get('amount', '0')))
                     fee_detail = fill.get('feeDetail', {})
                     if fee_detail:
@@ -611,8 +622,16 @@ class GridTrader(QObject):
                         total_fee += abs(fee)
                 else:
                     # 合约格式处理
-                    price = Decimal(str(fill.get('price', '0')))
-                    size = Decimal(str(fill.get('baseVolume', '0')))
+                    # price = Decimal(str(fill.get('price', '0')))
+                    # size = Decimal(str(fill.get('baseVolume', '0')))
+                    price = adjust_decimal_places(
+                        fill.get('price', '0'), 
+                        reference_price
+                    )
+                    size = adjust_decimal_places(
+                        fill.get('baseVolume', '0'),
+                        reference_price
+                    )
                     amount = Decimal(str(fill.get('quoteVolume', '0')))
                     fee_details = fill.get('feeDetail', [])
                     if fee_details:
