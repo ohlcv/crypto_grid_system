@@ -6,6 +6,8 @@ import traceback
 from typing import Dict, Optional, List, Set
 from decimal import Decimal
 from qtpy.QtCore import Signal
+from qtpy.QtWidgets import QMessageBox
+from qtpy.QtWidgets import QApplication
 from src.exchange.bitget.v2.bg_v2_api import BitgetMixAPI, BitgetSpotAPI
 from src.exchange.bitget.v2.mix.order_api import MixOrderApi
 from src.exchange.bitget.v2.spot.order_api import SpotOrderApi
@@ -80,6 +82,8 @@ class SubscriptionManager:
 
 class BitgetClient(BaseClient):
     error = Signal(str)
+    private_ws_connected = Signal()
+
     def __init__(self, api_key: str, api_secret: str, passphrase: str, inst_type: ExchangeType):
         super().__init__(inst_type)
         self._api_key = api_key
@@ -125,6 +129,14 @@ class BitgetClient(BaseClient):
         except Exception as e:
             print(f"[BitgetClient] 加载交易对失败: {e}")
 
+    def _handle_private_connected(self):
+        """处理私有WS连接成功"""
+        print("=== 私有WebSocket连接成功 ===")
+        print(f"Current connection status: public={self._public_ws.is_connected}, private={self._private_ws.is_connected}")
+        self._check_connection_status()
+        # 发送私有WebSocket连接成功信号
+        self.private_ws_connected.emit()
+
     def _connect_signals(self):
         """连接WebSocket信号"""
         print("[BitgetClient] Connecting public WebSocket signals")
@@ -136,7 +148,7 @@ class BitgetClient(BaseClient):
         print("[BitgetClient] Connecting private WebSocket signals")
         self._private_ws.message_received.connect(self._handle_private_message)
         self._private_ws.error.connect(lambda e: self._handle_error("ws_private", e))
-        self._private_ws.connected.connect(self._handle_private_connected)
+        self._private_ws.connected.connect(self._handle_private_connected)  # 更改为新的处理方法
         self._private_ws.disconnected.connect(self._handle_private_disconnected)
 
     def _handle_public_connected(self):
@@ -364,49 +376,18 @@ class BitgetClient(BaseClient):
         """测试API连接
         Returns:
             Dict: {
-                'success': bool,  # 测试是否成功
-                'message': str,   # 详细信息
-                'user_id': str,   # 用户ID
-                'ws_status': Dict[str, bool]  # WebSocket状态
+                'ws_status': Dict[str, bool],  # WebSocket连接状态
             }
         """
         try:
-            print("[BitgetClient] 开始测试API连接")
-            result = {
-                'success': False,
-                'message': '',
-                'user_id': '',
+            return {
                 'ws_status': self.get_ws_status()
             }
-            # 1. 检查WebSocket连接
-            ws_status = self.get_ws_status()
-            if not ws_status["public"] or not ws_status["private"]:
-                result['message'] = "WebSocket连接检查失败"
-                return result
-            # 2. 验证API权限并获取账户信息
-            if self.inst_type == ExchangeType.FUTURES:
-                response = self.rest_api.get_account_info()
-            else:
-                response = self.rest_api.get_account_info()
-            if response.get('code') != '00000':
-                result['message'] = f"API验证失败: {response.get('msg')}"
-                return result
-            # 3. 获取用户ID
-            user_id = response.get('data', {}).get('userId')
-            if user_id:
-                result['success'] = True
-                result['user_id'] = str(user_id)
-                result['message'] = "API连接测试通过"
-                print(f"[BitgetClient] API验证成功，用户ID: {user_id}")
-                self._load_valid_pair()
-            else:
-                result['message'] = "无法获取用户ID"
-            return result
         except Exception as e:
-            print(f"[BitgetClient] API测试失败: {str(e)}")
+            print(f"[BitgetClient] 获取连接状态失败: {e}")
             return {
-                'success': False,
-                'message': f"测试失败: {str(e)}",
-                'user_id': '',
-                'ws_status': self.get_ws_status()
+                'ws_status': {
+                    'public': False,
+                    'private': False
+                }
             }

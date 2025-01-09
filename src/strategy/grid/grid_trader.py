@@ -290,6 +290,8 @@ class GridTrader(QObject):
         print(f"\n[GridTrader] === 检查开仓条件 === {self.grid_data.pair} {self.grid_data.uid}")
         next_level = self.grid_data.get_next_level()
         total_levels = len(self.grid_data.grid_levels)
+        ts = self.grid_data.row_dict["时间戳"]
+        print(f"[GridTrader] 当前时间戳 {ts}")
         print(f"[GridTrader] 当前层级 {next_level} / 总层数 {total_levels}")
         
         # 检查是否已满层
@@ -369,6 +371,41 @@ class GridTrader(QObject):
                 self._place_order(next_level)
 
     @error_handler()
+    def _process_price_update(self):
+        """处理价格更新"""
+        if not self.grid_data.last_price:
+            return
+        
+        try:
+            current_price = self.grid_data.last_price
+            grid_status = self.grid_data.get_grid_status()
+            
+            if not grid_status["is_configured"]:
+                return
+            
+            # 计算当前浮动盈亏
+            position_metrics = self.grid_data.calculate_position_metrics()
+            unrealized_pnl = position_metrics['unrealized_pnl']
+            
+            # 检查总体止损条件（使用浮动盈亏判断）
+            if grid_status["filled_levels"] > 0 and self.grid_data.check_stop_loss_condition(unrealized_pnl):
+                self._close_all_positions("总体止损触发，全部平仓")
+                return
+
+            # 继续原有的网格交易逻辑
+            if grid_status["filled_levels"] > 0 and self.grid_data.row_dict["操作"]["平仓"]:
+                if self._check_take_profit(current_price):
+                    return
+                    
+            if not grid_status["is_full"] and self.grid_data.row_dict["操作"]["开仓"]:
+                self._check_open_position(current_price)
+                
+        except Exception as e:
+            error_msg = f"处理价格更新错误: {str(e)}"
+            self.logger.error(error_msg)
+            self.error_occurred.emit(self.grid_data.uid, error_msg)
+
+    @error_handler()
     def _handle_order_update(self, order_id: str, order_data: dict):
         """处理订单状态更新"""
         print(f"\n[GridTrader] === 订单状态更新 ===")
@@ -413,6 +450,28 @@ class GridTrader(QObject):
                         print(f"  成交金额: {fill_data['filled_value']}")
                         print(f"  手续费: {fill_data['fee']}")
 
+                        # 如果是平仓订单（网格止盈或总体止损），计算实现盈亏
+                        if order_data.get('trade_side') == 'close':
+                            level_config = self.grid_data.grid_levels.get(current_level)
+                            if level_config and level_config.filled_price:
+                                # 计算本次实现盈亏
+                                realized_profit = (
+                                    Decimal(str(fill_data['filled_price'])) - level_config.filled_price
+                                ) * Decimal(str(fill_data['filled_amount']))
+                                if not self.grid_data.is_long():
+                                    realized_profit = -realized_profit
+                                
+                                # 扣除手续费
+                                realized_profit -= Decimal(str(fill_data['fee']))
+                                
+                                # 添加到累计已实现盈利
+                                self.grid_data.add_realized_profit(realized_profit)
+                                
+                                # 检查是否达到总体止盈条件
+                                if self.grid_data.check_take_profit_condition():
+                                    self._close_all_positions("达到总体止盈目标，全部平仓")
+                                    return
+
                         # 更新网格数据
                         self.grid_data.update_order_fill(current_level, fill_data)
                         self._order_state.clear_pending_order()
@@ -441,6 +500,8 @@ class GridTrader(QObject):
         level_config = self.grid_data.grid_levels[last_level]   # 获取最后层的配置
         # print(f"[GridTrader] 最后层配置: {level_config}")
         print(f"\n[GridTrader] === 检查止盈条件 === {self.grid_data.pair} {self.grid_data.uid}")
+        ts = self.grid_data.row_dict["时间戳"]
+        print(f"[GridTrader] 当前时间戳 {ts}")
         # 获取最后已成交层级
         if last_level is None:
             print("[GridTrader] 未找到已成交的层级，无法检查止盈条件")
@@ -536,7 +597,7 @@ class GridTrader(QObject):
         if not fills_data:
             self.logger.info("not fills_data")
             return None
-        self.logger.info("fills_data: ", {fills_data})
+        self.logger.info(f"fills_data: {fills_data}")
         for fill in fills_data:
             try:
                 if is_spot:
@@ -759,46 +820,6 @@ class GridTrader(QObject):
             self.logger.error(f"[GridTrader] {error_msg}")
             self.logger.error(f"[GridTrader] 错误详情: {traceback.format_exc()}")
             self.handle_error(error_msg)
-
-    def _process_price_update(self):
-        """处理价格更新"""
-        if not self.grid_data.last_price:
-            return
-        
-        try:
-            current_price = self.grid_data.last_price
-            grid_status = self.grid_data.get_grid_status()
-            
-            if not grid_status["is_configured"]:
-                return
-            
-            # 先检查总体止盈止损条件
-            position_metrics = self.grid_data.calculate_position_metrics()
-            unrealized_pnl = position_metrics['unrealized_pnl']
-            # print("grid_status: ", grid_status)
-            
-            # 检查总体止盈条件
-            if grid_status["filled_levels"] > 0 and self.grid_data.check_take_profit_condition(unrealized_pnl):
-                self._close_all_positions("总体止盈触发，全部平仓")
-                return
-                
-            # 检查总体止损条件
-            if grid_status["filled_levels"] > 0 and self.grid_data.check_stop_loss_condition(unrealized_pnl):
-                self._close_all_positions("总体止损触发，全部平仓")
-                return
-
-            # 继续原有的网格交易逻辑
-            if grid_status["filled_levels"] > 0 and self.grid_data.row_dict["操作"]["平仓"]:
-                if self._check_take_profit(current_price):
-                    return
-                    
-            if not grid_status["is_full"] and self.grid_data.row_dict["操作"]["开仓"]:
-                self._check_open_position(current_price)
-                
-        except Exception as e:
-            error_msg = f"处理价格更新错误: {str(e)}"
-            self.logger.error(error_msg)
-            self.error_occurred.emit(self.grid_data.uid, error_msg)
 
     def _close_all_positions(self, reason: str):
         """平掉所有持仓并停止策略"""

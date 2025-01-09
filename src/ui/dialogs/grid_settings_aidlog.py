@@ -400,11 +400,13 @@ class GridDialog(QDialog):
             
         # 加载总体止盈止损设置
         self.tp_enabled.setChecked(self.grid_data.take_profit_config.enabled)
-        if self.grid_data.take_profit_config.profit_amount is not None:
+        if self.grid_data.take_profit_config.enabled and self.grid_data.take_profit_config.profit_amount is not None:
+            self.tp_amount.setEnabled(True)
             self.tp_amount.setText(str(self.grid_data.take_profit_config.profit_amount))
             
         self.sl_enabled.setChecked(self.grid_data.stop_loss_config.enabled)
-        if self.grid_data.stop_loss_config.loss_amount is not None:
+        if self.grid_data.stop_loss_config.enabled and self.grid_data.stop_loss_config.loss_amount is not None:
+            self.sl_amount.setEnabled(True)
             self.sl_amount.setText(str(self.grid_data.stop_loss_config.loss_amount))
 
     def save_grid(self):

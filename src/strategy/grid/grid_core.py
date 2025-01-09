@@ -114,7 +114,8 @@ class GridData(QObject):
         self.grid_levels: Dict[int, LevelConfig] = {}  # 层号 -> 配置
         self.last_price: Optional[Decimal] = None  # 最新价格
         self.last_update_time: Optional[datetime] = None  # 最后更新时间
-        self.row_dict = {  # 表格行数据
+        self.total_realized_profit = Decimal('0')  # 添加累计已实现盈利字段
+        self.row_dict = {
             "交易所": exchange,
             "交易对": pair,
             "方向": "做多",  # 默认做多
@@ -128,6 +129,9 @@ class GridData(QObject):
             "尾单价格": None,
             "开仓触发价": None,
             "止盈触发价": None,
+            "实现盈亏": None,    # 新增
+            "总体止盈": None,   # 新增
+            "总体止损": None,   # 新增
             "最后时间": None,
             "时间戳": None,
             "标识符": uid
@@ -226,6 +230,7 @@ class GridData(QObject):
             "最后时间": None,
             "标识符": self.uid
         }
+        self.total_realized_profit = Decimal('0')  # 重置累计盈利
         self.data_updated.emit(self.uid)
 
     def handle_take_profit(self, level: int, profit_data: dict) -> None:
@@ -482,21 +487,33 @@ class GridData(QObject):
                 'unrealized_pnl': unrealized_pnl.quantize(Decimal('0.0000'))
             }
         except Exception as e:
-            print(f"计算持仓指标错误: {e}")
+            self.logger.error(f"计算持仓指标错误: {e}")
             return {
                 'total_value': Decimal('0'),
                 'avg_price': Decimal('0'),
                 'unrealized_pnl': Decimal('0')
             }
 
-    def check_take_profit_condition(self, unrealized_pnl: Decimal) -> bool:
-        """检查是否达到总体止盈条件"""
+    def add_realized_profit(self, profit: Decimal):
+        """添加已实现盈利"""
+        self.total_realized_profit += profit
+        self.row_dict["实现盈亏"] = str(self.total_realized_profit)  # 更新显示
+        self.logger.info(f"[GridData] 更新累计已实现盈利: {self.total_realized_profit}")
+        
+        # 检查是否达到总体止盈条件
+        if self.check_take_profit_condition():
+            self.logger.info(f"[GridData] 达到总体止盈条件：{self.total_realized_profit} >= {self.take_profit_config.profit_amount}")
+            return True
+        return False
+
+    def check_take_profit_condition(self) -> bool:
+        """检查是否达到总体止盈条件（使用累计已实现盈利）"""
         if not self.take_profit_config.enabled or self.take_profit_config.profit_amount is None:
             return False
-        return unrealized_pnl >= self.take_profit_config.profit_amount
-
+        return self.total_realized_profit >= self.take_profit_config.profit_amount
+        
     def check_stop_loss_condition(self, unrealized_pnl: Decimal) -> bool:
-        """检查是否达到总体止损条件"""
+        """检查是否达到总体止损条件（使用总浮动亏损）"""
         if not self.stop_loss_config.enabled or self.stop_loss_config.loss_amount is None:
             return False
         return unrealized_pnl <= -self.stop_loss_config.loss_amount
@@ -612,6 +629,7 @@ class GridData(QObject):
             "direction": self.direction.value,
             'take_profit_config': self.take_profit_config.to_dict(),
             'stop_loss_config': self.stop_loss_config.to_dict(),
+            'total_realized_profit': float(self.total_realized_profit),  # 添加已实现盈利
             "grid_levels": {
                 level: {
                     "间隔%": float(config.interval_percent),
@@ -659,5 +677,6 @@ class GridData(QObject):
         instance.row_dict = data["row_dict"]
         instance.take_profit_config = TakeProfitConfig.from_dict(data.get('take_profit_config', {}))
         instance.stop_loss_config = StopLossConfig.from_dict(data.get('stop_loss_config', {}))
+        instance.total_realized_profit = Decimal(str(data.get('total_realized_profit', '0')))
         # print(f"[GridData] 反序列化完成: {len(instance.grid_levels)} 层配置")
         return instance
