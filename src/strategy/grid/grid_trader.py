@@ -4,7 +4,7 @@ import threading
 import time
 import traceback
 from typing import Optional, Dict
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from datetime import datetime
 from qtpy.QtCore import QObject, Signal
 
@@ -648,10 +648,30 @@ class GridTrader(QObject):
             is_long = self.grid_data.is_long()
             is_spot = self.grid_data.inst_type == "SPOT"
 
+            # 计算下单数量
             if is_spot:
                 order_size = float(level_config.invest_amount)
             else:
                 order_size = float(level_config.invest_amount / self.grid_data.last_price)
+
+            # 使用缓存的精度进行处理
+            precision = self.grid_data.quantity_precision or 4  # 默认精度为4
+            order_size = float(Decimal(str(order_size)).quantize(
+                Decimal('0.' + '0' * precision),
+                rounding=ROUND_HALF_UP
+            ))
+
+            # 检查最小交易量/额
+            min_amount = self.grid_data.min_trade_amount or Decimal('0')
+            min_value = self.grid_data.min_trade_value or Decimal('5')
+
+            if Decimal(str(order_size)) < min_amount:
+                raise ValueError(f"下单数量 {order_size} 小于最小交易量 {min_amount}")
+
+            order_value = Decimal(str(order_size)) * Decimal(str(self.grid_data.last_price))
+            if order_value < min_value:
+                raise ValueError(f"下单金额 {order_value} 小于最小交易额 {min_value}")
+            
             self.logger.debug(f"[GridTrader] 订单详情:")
             self.logger.debug(f"  网格层级: {level}")
             self.logger.debug(f"  方向: {'做多' if is_long else '做空'}")
@@ -740,11 +760,31 @@ class GridTrader(QObject):
             is_long = self.grid_data.is_long()
             is_spot = self.grid_data.inst_type == "SPOT"
             self.logger.info(f"{self.grid_data.inst_type} {self.grid_data.uid} {self.grid_data.pair} 准备止盈-{level}")
-            # 使用实际成交量
+
+            # 计算下单数量
             if not is_spot:
                 order_size = float(level_config.filled_amount / self.grid_data.last_price)
             else:
                 order_size = float(level_config.invest_amount / self.grid_data.last_price)
+                
+            # 使用缓存的精度进行处理
+            precision = self.grid_data.quantity_precision or 4  # 默认精度为4
+            order_size = float(Decimal(str(order_size)).quantize(
+                Decimal('0.' + '0' * precision),
+                rounding=ROUND_HALF_UP
+            ))
+            
+            # 检查最小交易量/额
+            min_amount = self.grid_data.min_trade_amount or Decimal('0')
+            min_value = self.grid_data.min_trade_value or Decimal('5')
+            
+            if Decimal(str(order_size)) < min_amount:
+                raise ValueError(f"下单数量 {order_size} 小于最小交易量 {min_amount}")
+                
+            order_value = Decimal(str(order_size)) * Decimal(str(self.grid_data.last_price))
+            if order_value < min_value:
+                raise ValueError(f"下单金额 {order_value} 小于最小交易额 {min_value}")
+            
             self.logger.debug(f"[GridTrader] 止盈订单详情:")
             self.logger.debug(f"  网格层级: {level}")
             self.logger.debug(f"  方向: {'卖出' if is_long else '买入'}")

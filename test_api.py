@@ -4,10 +4,14 @@ from src.exchange.bitget.v2.bg_v2_api import BitgetMixAPI, BitgetSpotAPI
 # 示例用法
 if __name__ == "__main__":
     # 替换为实际的 API 密钥、秘密密钥和密码短语
-    API_KEY = 'bg_6490a66edf0d67bd2ab005b40c3db9da'
-    API_SECRET_KEY = '547bbef648d12191ccdf4ff0e59e4e25753dc04371c565d512b9dced3c2fa42a'
-    PASSPHRASE = '13579246810'
+    # API_KEY = 'bg_6490a66edf0d67bd2ab005b40c3db9da'
+    # API_SECRET_KEY = '547bbef648d12191ccdf4ff0e59e4e25753dc04371c565d512b9dced3c2fa42a'
+    # PASSPHRASE = '13579246810'
     
+    API_KEY = 'bg_922b0240aa4a62375b9fdef5b297e9af'
+    API_SECRET_KEY = '6a28a9c6c7703b1e871dcfef07e4e67f0bec87b6eec1e9e916c2e4557783d7f8'
+    PASSPHRASE = 'SKYxjp19932259'
+
     # 创建交易实例
     future = BitgetMixAPI(API_KEY, API_SECRET_KEY, PASSPHRASE)
     

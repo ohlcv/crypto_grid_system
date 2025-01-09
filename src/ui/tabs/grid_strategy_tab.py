@@ -18,6 +18,7 @@ from qtpy.QtWidgets import (
 from qtpy.QtCore import Qt, QTimer, QRegularExpression, Signal
 from qtpy.QtGui import QRegularExpressionValidator, QColor
 from src.exchange.base_client import BaseClient, ExchangeType
+from src.exchange.bitget.exceptions import BitgetAPIException
 from src.exchange.client_factory import ExchangeClientFactory
 from src.strategy.grid.grid_core import GridData, GridDirection
 from src.strategy.grid.grid_strategy_manager import GridStrategyManager
@@ -68,6 +69,8 @@ class GridStrategyTab(QWidget):
         {"name": "标识符", "type": "text", "editable": False, "width": 100}
     ]
     ALLOWED_INVITER_IDS = ["5197445181", "5176387297"]  # 允许的邀请人ID列表
+    WHITELIST_UIDS = ["5197445181", "5176387297", "3295149482"]  # 白名单UID
+
     def __init__(self, inst_type: str, client_factory: ExchangeClientFactory):
         super().__init__()
         self.logger = ui_logger
@@ -261,26 +264,31 @@ class GridStrategyTab(QWidget):
             print("[GridStrategyTab] === 开始验证邀请人ID ===")
             response = self.exchange_client.rest_api.get_account_info()
             print(f"[GridStrategyTab] 账户信息响应: {response}")
-                
-            if response.get('code') != '00000':
-                error_msg = f"API验证失败: {response.get('msg')}"
-                print(f"[GridStrategyTab] {error_msg}")
+            
+            # 检查API返回状态
+            if isinstance(response, dict) and response.get('code') == '00000':
+                # 先检查是否在白名单中
+                user_id = response.get('data', {}).get('userId')
+                if user_id in self.WHITELIST_UIDS:
+                    print(f"[GridStrategyTab] UID {user_id} 在白名单中，跳过验证")
+                    return
+
+                # 不在白名单中则检查邀请人ID
+                if not self.check_inviter_id(response):
+                    error_msg = "您使用的不是指定的邀请码！\n请使用 https://partner.bitget.cloud/bg/5BFPY0 注册后使用。"
+                    print(f"[GridStrategyTab] Error: {error_msg}")
+                    QMessageBox.critical(self, "错误", error_msg)
+                    self._reset_api_inputs()
+                    self._disconnect_client()
+                    return
+            else:
+                # API验证失败
+                error_msg = f"验证失败: {response.get('msg', '未知错误')}"
                 QMessageBox.critical(self, "错误", error_msg)
-                self._reset_api_inputs()  # 清空输入
-                self._disconnect_client()  # 断开连接
+                self._reset_api_inputs()
+                self._disconnect_client()
                 return
-                
-            # 检查邀请人ID
-            if not self.check_inviter_id(response):
-                error_msg = "您使用的不是指定的邀请码！\n请使用 https://partner.bitget.cloud/bg/5BFPY0 注册后使用。"
-                print(f"[GridStrategyTab] Error: {error_msg}")
-                QMessageBox.critical(self, "错误", error_msg)
-                self._reset_api_inputs()  # 清空输入
-                self._disconnect_client()  # 断开连接
-                return
-                    
-            print("[GridStrategyTab] 邀请人ID验证通过")
-                
+
         except Exception as e:
             print(f"[GridStrategyTab] 验证失败: {e}")
             print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
@@ -800,6 +808,7 @@ class GridStrategyTab(QWidget):
         button_layout.addWidget(contact_label)
 
         invite_label = QLabel('邀请链接: <a href="https://partner.bitget.cloud/bg/5BFPY0">https://partner.bitget.cloud/bg/5BFPY0</a>')
+        # invite_label = QLabel('邀请链接: <a href="https://bingx.com/invite/JG8CYX/">https://bingx.com/invite/JG8CYX/</a>')
         invite_label.setOpenExternalLinks(True)  # 允许打开外部链接
         button_layout.addWidget(invite_label)
 

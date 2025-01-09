@@ -8,7 +8,7 @@ from datetime import datetime
 from qtpy.QtCore import QObject, Signal
 
 from src.exchange.base_client import BaseClient
-from .grid_core import GridData
+from .grid_core import GridData, GridDirection
 from .grid_trader import GridTrader
 
 class GridStrategyManager(QObject):
@@ -26,16 +26,56 @@ class GridStrategyManager(QObject):
         self._data: Dict[str, GridData] = {}  # uid -> GridData
         self._lock = threading.Lock()
 
-    def create_strategy(self, uid: str, pair: str, exchange: str, inst_type: str) -> GridData:
+    def create_strategy(self, uid: str, pair: str, exchange: str, inst_type: str) -> Optional[GridData]:
         """创建新策略"""
-        with self._lock:
-            if uid in self._data:
-                raise ValueError(f"Strategy {uid} already exists")
+        try:
+            # 创建策略数据对象
+            grid_data = self.strategy_manager.create_strategy(uid, pair, exchange, inst_type)
+            if not grid_data:
+                return None
+                
+            # 获取交易对信息
+            symbol = pair.replace('/', '')
+            is_spot = inst_type == "SPOT"
+            pair_info = self.exchange_client.rest_api.get_pairs(symbol=symbol)
+            
+            if pair_info.get('code') != '00000':
+                raise ValueError(f"获取交易对信息失败: {pair_info.get('msg')}")
+                
+            # 缓存交易参数
+            pair_data = pair_info['data'][0]
+            if is_spot:
+                # 现货参数
+                grid_data.quantity_precision = int(pair_data.get('quantityPrecision', 4))
+                grid_data.price_precision = int(pair_data.get('pricePrecision', 2))
+                grid_data.min_trade_amount = Decimal(str(pair_data.get('minTradeAmount', '0')))
+                grid_data.min_trade_value = Decimal(str(pair_data.get('minTradeUSDT', '5')))
+            else:
+                # 合约参数
+                grid_data.quantity_precision = int(pair_data.get('volumePlace', 4))
+                grid_data.price_precision = int(pair_data.get('pricePlace', 2))
+                grid_data.min_trade_amount = Decimal(str(pair_data.get('minTradeNum', '0')))
+                grid_data.min_trade_value = Decimal(str(pair_data.get('minTradeUSDT', '5')))
 
-        print(f"[GridStrategyManager] Creating strategy: {uid} - {pair}")
-        grid_data = GridData(uid, pair, exchange, inst_type)
-        self._data[uid] = grid_data
-        return grid_data
+            # 设置方向
+            is_long = not self.position_mode_button.isChecked()
+            grid_data.direction = (
+                GridDirection.LONG if self.inst_type == "SPOT" or is_long
+                else GridDirection.SHORT
+            )
+            grid_data.row_dict["方向"] = grid_data.direction.value
+            
+            # 初始化操作状态
+            grid_data.row_dict["操作"] = {"开仓": True, "平仓": True}
+            
+            # 连接信号
+            grid_data.data_updated.connect(self._update_table_row)
+            
+            return grid_data
+            
+        except Exception as e:
+            self.show_error_message(f"创建策略失败: {str(e)}")
+            return None
 
     def start_strategy(self, uid: str, exchange_client: BaseClient) -> bool:
         """启动策略"""

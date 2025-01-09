@@ -36,7 +36,6 @@ class ExchangeClientFactory(QObject):
 
     def create_client(self, tab_id: str, exchange: str, api_config: dict, inst_type: ExchangeType) -> Optional[BaseClient]:
         """创建交易所客户端实例"""
-        # try:
         print(f"\n=== 开始创建客户端 ===")
         print(f"Tab ID: {tab_id}")
         print(f"Exchange: {exchange}")
@@ -63,52 +62,37 @@ class ExchangeClientFactory(QObject):
                 passphrase=api_config.get('passphrase', ''),
                 inst_type=inst_type
             )
-            # print(f"客户端实例创建成功")
             
-            # 创建并启动线程
-            # print(f"准备启动客户端线程...")
+            # 保存客户端实例
+            self._clients[tab_id] = client
+            
+            # 创建后台连接线程，但不立即启动
             thread = threading.Thread(
                 target=self._run_client,
                 args=(client,),
-                name=f"Exchange-{exchange}-{tab_id}",  # 更有意义的名称
+                name=f"Exchange-{exchange}-{tab_id}",
                 daemon=True
             )
-            # 保存客户端和线程实例
-            self._clients[tab_id] = client
             self._client_threads[tab_id] = thread
             
-            # 启动线程
-            thread.start()
-            print(f"客户端线程已启动: {thread.name}")
-            
-            # 发送信号
-            self.client_created.emit(client)
+            # 先发送信号，让UI可以继续
             print(f"[ExchangeClientFactory] Created client instance: {client}")
-            print("[ExchangeClientFactory] Emitted client_created signal")
-            print(f"=== 客户端创建完成 ===\n")
+            self.client_created.emit(client)
+            print("=== 客户端创建完成 ===\n")
+            
+            # 启动连接线程
+            thread.start()
             
             return client
-                
-        # except Exception as e:
-        #     error_msg = f"Failed to create client: {str(e)}"
-        #     print(f"错误: {error_msg}")
-        #     print(f"错误详情: {traceback.format_exc()}")
-        #     self.client_error.emit(error_msg)
-        #     return None
 
     def _run_client(self, client: BaseClient) -> None:
         """在独立线程中运行客户端"""
-        # try:
-        print(f"\n=== 客户端线程开始运行 ===")
-        print(f"Thread name: {threading.current_thread().name}")
-        # print(f"准备连接客户端...")
-        client.connect()
-        # print(f"客户端连接完成")
-        # except Exception as e:
-        #     error_msg = f"Client connection error: {str(e)}"
-        #     print(f"错误: {error_msg}")
-        #     print(f"错误详情: {traceback.format_exc()}")
-        #     self.client_error.emit(error_msg)
+        try:
+            # 启动连接流程但不等待
+            client.connect(wait=False)
+        except Exception as e:
+            print(f"客户端连接错误: {str(e)}")
+            self.client_error.emit(str(e))
 
     def _force_close_client(self, client):
         """强制关闭客户端的所有连接"""

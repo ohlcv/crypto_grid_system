@@ -1,4 +1,6 @@
 from decimal import ROUND_HALF_UP, Decimal
+
+from src.exchange.bitget.exceptions import BitgetAPIException
 from ..consts import GET, POST
 from .spot.order_api import SpotOrderApi
 from .mix.order_api import MixOrderApi
@@ -21,9 +23,18 @@ class BitgetSpotAPI:
             response = self.order_api._request_with_params(GET, '/api/v2/spot/account/info', {})
             self.logger.debug(f"账户信息响应: {response}")
             return response
+        except BitgetAPIException as e:
+            self.logger.error(f"获取账户信息失败: {e.message}")
+            return {
+                'code': str(e.code),
+                'msg': e.message
+            }
         except Exception as e:
             self.logger.error("获取账户信息失败", exc_info=e)
-            return e
+            return {
+                'code': '99999',
+                'msg': str(e)
+            }
 
     @error_handler()
     def get_pairs(self, symbol=None):
@@ -123,9 +134,23 @@ class BitgetMixAPI:
 
     @error_handler()
     def get_account_info(self):
-        response = self.order_api._request_with_params(GET, '/api/v2/spot/account/info', {})
-        self.logger.info(f"账户信息响应: {response}")
-        return response
+        self.logger.info("获取现货账户信息")
+        try:
+            response = self.order_api._request_with_params(GET, '/api/v2/spot/account/info', {})
+            self.logger.debug(f"账户信息响应: {response}")
+            return response
+        except BitgetAPIException as e:
+            self.logger.error(f"获取账户信息失败: {e.message}")
+            return {
+                'code': str(e.code),
+                'msg': e.message
+            }
+        except Exception as e:
+            self.logger.error("获取账户信息失败", exc_info=e)
+            return {
+                'code': '99999',
+                'msg': str(e)
+            }
 
     def get_pairs(self, symbol=None, productType="USDT-FUTURES"):
         """获取合约交易对信息"""

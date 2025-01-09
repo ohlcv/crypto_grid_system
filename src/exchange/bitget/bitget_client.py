@@ -90,10 +90,10 @@ class BitgetClient(BaseClient):
         self._api_secret = api_secret
         self._passphrase = passphrase
         self._connected = False
-        self._subscriptions = set()  # 保存订阅信息
+        self._subscriptions = set()
         self._subscription_manager = SubscriptionManager()
-
-        # 创建WebSocket客户端
+        
+        # 创建客户端但不立即连接
         self._public_ws = BGWebSocketClient(is_private=False)
         self._private_ws = BGWebSocketClient(
             is_private=True,
@@ -101,7 +101,7 @@ class BitgetClient(BaseClient):
             api_secret=api_secret,
             passphrase=passphrase
         )
-
+        
         # 创建REST API客户端
         if inst_type == ExchangeType.SPOT:
             self.rest_api = BitgetSpotAPI(api_key, api_secret, passphrase)
@@ -111,10 +111,22 @@ class BitgetClient(BaseClient):
         self.logger = ws_logger
         self.api_logger = api_logger
         self.logger.info(f"初始化Bitget客户端 - {inst_type.value}")
-
+        
         # 连接信号
         self._connect_signals()
-        self._load_valid_pair()
+
+    def _load_valid_pair_async(self):
+        """异步加载所有有效的交易对"""
+        try:
+            print("[BitgetClient] 正在后台加载交易对列表...")
+            response = self.rest_api.get_pairs()
+            if response.get('code') == '00000':
+                pairs = response.get('data', [])
+                for pair_info in pairs:
+                    self._subscription_manager.add_valid_pair(pair_info['symbol'])
+                print(f"[BitgetClient] 已加载 {len(pairs)} 个交易对")
+        except Exception as e:
+            print(f"[BitgetClient] 后台加载交易对失败: {e}")
 
     def _load_valid_pair(self):
         """加载所有有效的交易对"""
@@ -194,8 +206,9 @@ class BitgetClient(BaseClient):
 
     def check_pair_valid(self, pair: str) -> bool:
         """检查交易对是否有效"""
-        pair = pair.replace('/', '').replace('-', '')  # 删除 '/' 和 '-'
-        return self._subscription_manager.is_valid_pair(pair)
+        # pair = pair.replace('/', '').replace('-', '')  # 删除 '/' 和 '-'
+        # return self._subscription_manager.is_valid_pair(pair)
+        return True
 
     def _handle_public_message(self, message: dict):
         """处理公共WebSocket消息"""
@@ -236,28 +249,33 @@ class BitgetClient(BaseClient):
             except Exception as e:
                 print(f"重新订阅失败 {pair} - {channel}: {str(e)}")
 
-    def connect(self):
-        """建立连接"""
+    def connect(self, wait: bool = True):
+        """建立连接
+        Args:
+            wait: 是否等待连接完成
+        """
         try:
             print(f"\n=== BitgetClient 开始连接 ===")
-            # print(f"[BitgetClient] Public WS URL: {self._public_ws._url}")
-            # print(f"[BitgetClient] Private WS URL: {self._private_ws._url}")
             
-            print(f"[BitgetClient] 准备连接公共WS...")
-            # 连接客户端状态变化信号
-            self._public_ws.connected.connect(self._handle_public_connected)
-            self._public_ws.disconnected.connect(self._handle_public_disconnected)
-            self._public_ws.connect()
-            self.logger.info(f"[BitgetClient] 公共WS连接已连接")
-            
-            print(f"[BitgetClient] 准备连接私有WS...")
-            # 连接客户端状态变化信号
-            self._private_ws.connected.connect(self._handle_private_connected)
-            self._private_ws.disconnected.connect(self._handle_private_disconnected)
-            self._private_ws.connect()
-            self.logger.info(f"[BitgetClient] 私有WS连接已连接")
-
+            # 启动公共和私有WebSocket连接
+            def start_connections():
+                print(f"[BitgetClient] 开始连接WebSocket...")
+                self._public_ws.connect()
+                self._private_ws.connect()
+                
+            # 如果不等待，就在后台线程中连接
+            if not wait:
+                threading.Thread(
+                    target=start_connections,
+                    name=f"WebSocket-Connect-{id(self)}",
+                    daemon=True
+                ).start()
+                return True
+                
+            # 否则在当前线程中连接
+            start_connections()
             return True
+            
         except Exception as e:
             self.logger.error("WebSocket连接失败", exc_info=e)
             self._handle_error("connection", str(e))

@@ -115,6 +115,13 @@ class GridData(QObject):
         self.last_price: Optional[Decimal] = None  # 最新价格
         self.last_update_time: Optional[datetime] = None  # 最后更新时间
         self.total_realized_profit = Decimal('0')  # 添加累计已实现盈利字段
+
+        # 添加交易参数缓存
+        self.quantity_precision: Optional[int] = None  # 数量精度
+        self.price_precision: Optional[int] = None    # 价格精度
+        self.min_trade_amount: Optional[Decimal] = None  # 最小交易数量
+        self.min_trade_value: Optional[Decimal] = None   # 最小交易额
+
         self.row_dict = {
             "交易所": exchange,
             "交易对": pair,
