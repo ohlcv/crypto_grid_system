@@ -11,7 +11,7 @@ from src.ui.tabs.grid_strategy_tab import GridStrategyTab
 from src.exchange.client_factory import ExchangeClientFactory
 from src.utils.common.common import resource_path
 from qt_material import apply_stylesheet
-
+from qtpy.QtCore import QTimer
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -33,7 +33,7 @@ class MainWindow(QMainWindow):
         
         # 最后设置图标
         self.setup_icons()
-        
+
     def init_ui_components(self):
         """初始化UI组件的基本结构"""
         # 创建中心部件和布局
@@ -53,16 +53,24 @@ class MainWindow(QMainWindow):
         self.grid_tab_widget = QTabWidget()
         grid_strategy_layout.addWidget(self.grid_tab_widget)
         
-        # 添加现货和合约网格标签页
+        # 添加现货网格标签页
         spot_tab = GridStrategyTab("SPOT", self.client_factory)
-        futures_tab = GridStrategyTab("FUTURES", self.client_factory)
-        
-        # 添加到子标签页
         self.grid_tab_widget.addTab(spot_tab, "现货网格")
-        self.grid_tab_widget.addTab(futures_tab, "合约网格")
         
         # 将网格策略页面添加到主标签页
         self.main_tab_widget.addTab(grid_strategy_widget, "网格策略")
+        
+        # 使用 QTimer 延迟 1 秒后添加合约网格标签页
+        QTimer.singleShot(1000, self.add_futures_tab)
+
+    def add_futures_tab(self):
+        """延迟 1 秒后添加合约网格标签页"""
+        try:
+            futures_tab = GridStrategyTab("FUTURES", self.client_factory)
+            self.grid_tab_widget.addTab(futures_tab, "合约网格")
+            print("✅ 合约网格标签页加载成功")
+        except Exception as e:
+            print(f"❌ 合约网格标签页加载失败: {str(e)}")
 
     def setup_theme(self):
         """设置应用程序主题"""

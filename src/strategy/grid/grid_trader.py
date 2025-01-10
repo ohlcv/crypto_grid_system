@@ -279,21 +279,30 @@ class GridTrader(QObject):
                 print(f"  目标比例: {rebound}")
                 return rebound_ratio >= rebound
 
+    def _get_last_take_profit_price(self, level: int) -> Optional[Decimal]:
+        """获取某层最近一次的止盈价格"""
+        try:
+            config = self.grid_data.grid_levels.get(level)
+            if not config:
+                return None
+                
+            return getattr(config, 'last_tp_price', None)
+        except Exception as e:
+            self.logger.error(f"获取止盈价格失败: {e}")
+            return None
+
     @error_handler()
     def _check_open_position(self, current_price: Decimal) -> None:
         """检查开仓条件"""
         operation_status = self.grid_data.row_dict.get("操作", {})
         can_open = operation_status.get("开仓", False)
-        print(f"[GridTrader] 检查开仓状态: {can_open}")
         if not can_open:
             print(f"[GridTrader] 开仓操作被禁用")
             return
+
         print(f"\n[GridTrader] === 检查开仓条件 === {self.grid_data.pair} {self.grid_data.uid}")
         next_level = self.grid_data.get_next_level()
         total_levels = len(self.grid_data.grid_levels)
-        ts = self.grid_data.row_dict["时间戳"]
-        print(f"[GridTrader] 当前时间戳 {ts}")
-        print(f"[GridTrader] 当前层级 {next_level} / 总层数 {total_levels}")
         
         # 检查是否已满层
         if next_level is None or next_level >= total_levels:
@@ -302,31 +311,28 @@ class GridTrader(QObject):
 
         level_config = self.grid_data.grid_levels[next_level]
         is_long = self.grid_data.is_long()
-        print(f"[GridTrader] 策略方向: {'做多' if is_long else '做空'}")
         
         # 第一层网格特殊处理
         if next_level == 0:
             if self._check_first_grid(current_price):
-                print(f"[GridTrader] 第一层网格条件满足，准备下单")
                 self._place_order(next_level)
             return
 
+        # 获取上一次止盈价格
+        last_tp_price = self._get_last_take_profit_price(next_level)
+        
         # 计算触发价格（如果尚未设置）
         if not self._price_state.trigger_price:
-            print(f"[GridTrader] 当前触发价格未设置，尝试获取上一层数据")
             last_level = self.grid_data.get_last_filled_level()
             if last_level is None:
-                print(f"[GridTrader] 无法找到最后已成交的层级 (None)")
                 return
-            print(f"[GridTrader] 最后已成交的层级: {last_level}")
-            
+                
             if last_level not in self.grid_data.grid_levels:
                 print(f"[GridTrader] 警告: 找不到层级 {last_level} 的网格配置")
                 return
 
             last_level_config = self.grid_data.grid_levels[last_level]
             if not last_level_config.filled_price:
-                print(f"[GridTrader] 层级 {last_level} 没有成交价格，数据: {last_level_config}")
                 return
 
             base_price = last_level_config.filled_price
@@ -337,16 +343,38 @@ class GridTrader(QObject):
             else:
                 self._price_state.trigger_price = base_price * (Decimal('1') + interval)
 
-            print(f"[GridTrader] 使用基准信息:")
-            print(f"  参考层级: {last_level}")
-            print(f"  基准价格: {base_price}")
-            print(f"  间隔比例: {interval}")
-            print(f"  触发价格: {self._price_state.trigger_price}")
+        # 如果有平仓历史
+        if last_tp_price:
+            print(f"[GridTrader] 检查开仓条件 - 存在平仓历史")
+            print(f"上次平仓价格: {last_tp_price}")
+            print(f"当前价格: {current_price}")
+            
+            # 如果当前价格高于平仓价格
+            if current_price > last_tp_price:
+                print(f"[GridTrader] 当前价格高于平仓价格，等待回落")
+                return
+                
+            # 价格低于平仓价格，开始寻找底部
+            if not self._price_state.extreme_price:
+                self._price_state.extreme_price = current_price
+            else:
+                if is_long:
+                    self._price_state.extreme_price = min(self._price_state.extreme_price, current_price)
+                else:
+                    self._price_state.extreme_price = max(self._price_state.extreme_price, current_price)
+            
+            # 检查反弹条件
+            if not self._check_rebound(current_price, level_config, is_open=True):
+                return
+                
+            # 满足反弹条件，下单
+            print(f"[GridTrader] 满足反弹条件，准备下单")
+            self._place_order(next_level)
+            return
 
-        # 检查是否达到触发价
+        # 如果没有平仓历史，使用原有逻辑
         print(f"[GridTrader] 当前市场价格: {current_price}")
         print(f"[GridTrader] 开仓触发价格: {self._price_state.trigger_price}")
-        print(f"[GridTrader] 开仓触发间隔: {level_config.interval_percent}")
 
         triggered = False
         if is_long:
@@ -356,7 +384,6 @@ class GridTrader(QObject):
 
         if triggered:
             print(f"[GridTrader] === 价格达到触发条件 ===")
-            # 更新极值价格
             if not self._price_state.extreme_price:
                 self._price_state.extreme_price = current_price
             else:
@@ -364,9 +391,9 @@ class GridTrader(QObject):
                     self._price_state.extreme_price = min(self._price_state.extreme_price, current_price)
                 else:
                     self._price_state.extreme_price = max(self._price_state.extreme_price, current_price)
+            
             print(f"[GridTrader] 更新极值价格: {self._price_state.extreme_price}")
             
-            # 检查反弹条件
             if self._check_rebound(current_price, level_config, is_open=True):
                 print(f"[GridTrader] 反弹条件满足，准备下单")
                 self._place_order(next_level)

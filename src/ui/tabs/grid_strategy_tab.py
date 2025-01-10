@@ -261,22 +261,45 @@ class GridStrategyTab(QWidget):
     def _verify_inviter_id(self):
         """验证邀请人ID"""
         try:
-            print("[GridStrategyTab] === 开始验证邀请人ID ===")
+            print("\n[GridStrategyTab] === 开始验证邀请人ID ===")
             response = self.exchange_client.rest_api.get_account_info()
-            print(f"[GridStrategyTab] 账户信息响应: {response}")
-            
+            print(f"[GridStrategyTab] API响应: {response}")
+                
             # 检查API返回状态
             if isinstance(response, dict) and response.get('code') == '00000':
+                # 获取用户信息
+                data = response.get('data', {})
+                user_id = data.get('userId')
+                inviter_id = data.get('inviterId')
+
+                # 更新用户ID输入框
+                if user_id:
+                    self.user_id_input.setText(str(user_id))
+                    # 自动保存配置
+                    self.save_api_config(auto_save=True)
+
+                print(f"\n[GridStrategyTab] === 用户信息检查 ===")
+                print(f"当前用户 UID: {user_id}")
+                print(f"邀请人 UID: {inviter_id}")
+                print(f"白名单列表: {self.WHITELIST_UIDS}")
+                print(f"允许邀请人列表: {self.ALLOWED_INVITER_IDS}")
+                print(f"是否白名单用户: {'是' if user_id in self.WHITELIST_UIDS else '否'}")
+                print(f"是否被邀请用户: {'是' if inviter_id in self.ALLOWED_INVITER_IDS else '否'}")
+
                 # 先检查是否在白名单中
-                user_id = response.get('data', {}).get('userId')
                 if user_id in self.WHITELIST_UIDS:
-                    print(f"[GridStrategyTab] UID {user_id} 在白名单中，跳过验证")
+                    print(f"[GridStrategyTab] ✅ UID {user_id} 在白名单中，验证通过")
                     return
 
                 # 不在白名单中则检查邀请人ID
-                if not self.check_inviter_id(response):
+                if inviter_id in self.ALLOWED_INVITER_IDS:
+                    print(f"[GridStrategyTab] ✅ 邀请人 {inviter_id} 验证通过")
+                    return
+                else:
                     error_msg = "您使用的不是指定的邀请码！\n请使用 https://partner.bitget.cloud/bg/5BFPY0 注册后使用。"
-                    print(f"[GridStrategyTab] Error: {error_msg}")
+                    print(f"[GridStrategyTab] ❌ 验证失败: 非指定邀请码用户")
+                    print(f"[GridStrategyTab] 当前邀请人: {inviter_id}")
+                    print(f"[GridStrategyTab] 允许邀请人: {self.ALLOWED_INVITER_IDS}")
                     QMessageBox.critical(self, "错误", error_msg)
                     self._reset_api_inputs()
                     self._disconnect_client()
@@ -284,13 +307,14 @@ class GridStrategyTab(QWidget):
             else:
                 # API验证失败
                 error_msg = f"验证失败: {response.get('msg', '未知错误')}"
+                print(f"[GridStrategyTab] ❌ API验证失败: {error_msg}")
                 QMessageBox.critical(self, "错误", error_msg)
                 self._reset_api_inputs()
                 self._disconnect_client()
                 return
 
         except Exception as e:
-            print(f"[GridStrategyTab] 验证失败: {e}")
+            print(f"[GridStrategyTab] ❌ 验证过程出错: {e}")
             print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
             error_msg = f"验证失败: {str(e)}"
             QMessageBox.critical(self, "错误", error_msg)
@@ -887,27 +911,58 @@ class GridStrategyTab(QWidget):
             return
         pair = f"{symbol}/{base}"
         exchange = self.exchange_combo.currentData()
+        
         # 检查客户端状态
         if not self.check_client_status():
             self.show_error_message("交易所客户端未连接，请检查网络或配置！")
             return
-        # 检查交易对是否有效
-        if not self.exchange_client.check_pair_valid(pair):
-            self.show_error_message(f"交易对 {pair} 不存在，请检查输入！")
-            return
+            
         try:
+            # 检查交易对是否有效
+            if not self.exchange_client.check_pair_valid(pair):
+                self.show_error_message(f"交易对 {pair} 不存在，请检查输入！")
+                return
+                
+            # 获取交易对信息
+            symbol_normalized = pair.replace('/', '')
+            is_spot = self.inst_type == "SPOT"
+            pair_info = self.exchange_client.rest_api.get_pairs(symbol=symbol_normalized)
+            
+            if pair_info.get('code') != '00000':
+                raise ValueError(f"获取交易对信息失败: {pair_info.get('msg')}")
+                
             # 创建策略
             uid = str(uuid.uuid4())[:8]
-            grid_data = self.create_strategy(uid, pair, exchange, self.inst_type)
+            grid_data = self.strategy_manager.create_strategy(uid, pair, exchange, self.inst_type)
             if not grid_data:
                 raise ValueError("创建策略失败")
+                
+            # 缓存交易参数
+            pair_data = pair_info['data'][0]
+            if is_spot:
+                # 现货参数
+                grid_data.quantity_precision = int(pair_data.get('quantityPrecision', 4))
+                grid_data.price_precision = int(pair_data.get('pricePrecision', 2))
+                grid_data.min_trade_amount = Decimal(str(pair_data.get('minTradeAmount', '0')))
+                grid_data.min_trade_value = Decimal(str(pair_data.get('minTradeUSDT', '5')))
+            else:
+                # 合约参数
+                grid_data.quantity_precision = int(pair_data.get('volumePlace', 4))
+                grid_data.price_precision = int(pair_data.get('pricePlace', 2))
+                grid_data.min_trade_amount = Decimal(str(pair_data.get('minTradeNum', '0')))
+                grid_data.min_trade_value = Decimal(str(pair_data.get('minTradeUSDT', '5')))
+                
+            # 设置方向
+            is_long = not self.position_mode_button.isChecked()
+            grid_data.set_direction(is_long)
+            
             # 添加到表格
             self.add_strategy_to_table(uid)
             # 清空输入
             self.input_symbol.clear()
-            # print(f"[GridStrategyTab] 添加新交易对: {pair} ({uid})")
             # 更新线程信息显示
             self.update_thread_info_label()
+            
         except Exception as e:
             self.show_error_message(f"添加交易对失败: {str(e)}")
 
