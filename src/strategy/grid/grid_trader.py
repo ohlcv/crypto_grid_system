@@ -186,42 +186,6 @@ class GridTrader(QObject):
         return True
 
     @error_handler()
-    def _process_price_update(self):
-        """处理价格更新"""
-        if not self.grid_data.last_price:
-            print(f"[GridTrader] 当前价格为空，跳过处理")
-            return
-        # print(f"[GridTrader] 处理价格更新: {self.grid_data.last_price}")
-        try:
-            # print(f"\n[GridTrader] === 处理价格更新 === {self.grid_data.pair} {self.grid_data.uid}")
-            current_price = self.grid_data.last_price
-            
-            # 获取网格状态
-            grid_status = self.grid_data.get_grid_status()
-            
-            if not grid_status["is_configured"]:
-                print(f"[GridTrader] {self.grid_data.uid} - 未设置网格，跳过处理")
-                return
-                
-            # 先检查是否需要处理止盈
-            if grid_status["filled_levels"] > 0 and self.grid_data.row_dict["操作"]["平仓"]:
-                if self._check_take_profit(current_price):
-                    return  # 如果处理了止盉，本次处理结束
-            
-            # 再检查是否需要开仓
-            if not grid_status["is_full"] and self.grid_data.row_dict["操作"]["开仓"]:
-                print(f"[GridTrader] 检查开仓条件 - 当前 {grid_status['filled_levels']}/{grid_status['total_levels']} 层")
-                self._check_open_position(current_price)
-            elif grid_status["is_full"]:
-                print(f"[GridTrader] {self.grid_data.uid} - 已开满 {grid_status['total_levels']} 层")
-                
-        except Exception as e:
-            error_msg = f"处理价格更新错误: {str(e)}"
-            print(f"[GridTrader] {error_msg}")
-            self.logger.error(f"[GridTrader] 错误详情: {traceback.format_exc()}")
-            self.error_occurred.emit(self.grid_data.uid, error_msg)
-
-    @error_handler()
     def _check_rebound(self, current_price: Decimal, level_config, is_open: bool) -> bool:
         """
         检查反弹条件

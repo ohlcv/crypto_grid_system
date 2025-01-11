@@ -1,5 +1,116 @@
 {
     "inst_type": "SPOT",
-    "strategies": {},
-    "running_strategies": []
+    "strategies": {
+        "155e65b1": {
+            "uid": "155e65b1",
+            "pair": "DOGE/USDT",
+            "exchange": "bitget",
+            "inst_type": "SPOT",
+            "direction": "long",
+            "take_profit_config": {
+                "enabled": false,
+                "profit_amount": null
+            },
+            "stop_loss_config": {
+                "enabled": false,
+                "loss_amount": null
+            },
+            "total_realized_profit": 0.0,
+            "grid_levels": {
+                "0": {
+                    "间隔%": 1.0,
+                    "开仓反弹%": 0.1,
+                    "平仓反弹%": 0.1,
+                    "止盈%": 1.0,
+                    "成交额": 40.0,
+                    "成交量": 120.4492,
+                    "开仓价": 0.33209,
+                    "开仓时间": "2025-01-11T15:04:34.668588",
+                    "已开仓": true,
+                    "order_id": "1261869574489808925"
+                }
+            },
+            "row_dict": {
+                "交易所": "bitget",
+                "交易对": "DOGE/USDT",
+                "方向": "long",
+                "操作": {
+                    "开仓": true,
+                    "平仓": true
+                },
+                "运行状态": "已停止",
+                "当前层数": "1/1",
+                "持仓价值": "40.02",
+                "持仓盈亏": "0.0205",
+                "持仓均价": "0.3321",
+                "最后价格": "0.33226",
+                "尾单价格": "0.33209",
+                "开仓触发价": "未定义",
+                "止盈触发价": "0.3354109",
+                "实现盈亏": null,
+                "总体止盈": "-",
+                "总体止损": "-",
+                "最后时间": "15:09:06",
+                "时间戳": 1736579346396,
+                "标识符": "155e65b1"
+            }
+        },
+        "f7eb48b1": {
+            "uid": "f7eb48b1",
+            "pair": "DOGE/USDT",
+            "exchange": "bitget",
+            "inst_type": "SPOT",
+            "direction": "long",
+            "take_profit_config": {
+                "enabled": false,
+                "profit_amount": null
+            },
+            "stop_loss_config": {
+                "enabled": false,
+                "loss_amount": null
+            },
+            "total_realized_profit": 0.0,
+            "grid_levels": {
+                "0": {
+                    "间隔%": 1.0,
+                    "开仓反弹%": 0.1,
+                    "平仓反弹%": 0.1,
+                    "止盈%": 1.0,
+                    "成交额": 41.0,
+                    "成交量": null,
+                    "开仓价": null,
+                    "开仓时间": null,
+                    "已开仓": false,
+                    "order_id": null
+                }
+            },
+            "row_dict": {
+                "交易所": "bitget",
+                "交易对": "DOGE/USDT",
+                "方向": "long",
+                "操作": {
+                    "开仓": true,
+                    "平仓": true
+                },
+                "运行状态": "运行中",
+                "当前层数": "0/1",
+                "持仓价值": null,
+                "持仓盈亏": null,
+                "持仓均价": null,
+                "最后价格": null,
+                "尾单价格": null,
+                "开仓触发价": null,
+                "止盈触发价": null,
+                "实现盈亏": null,
+                "总体止盈": "-",
+                "总体止损": "-",
+                "最后时间": null,
+                "时间戳": null,
+                "标识符": "f7eb48b1"
+            }
+        }
+    },
+    "running_strategies": [
+        "f7eb48b1"
+    ]
 }
