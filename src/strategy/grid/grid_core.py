@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from qtpy.QtCore import QObject, Signal
+from src.utils.common.tools import find_value
 from src.utils.logger.log_helper import grid_logger
 from decimal import Decimal
 from typing import Optional
@@ -525,20 +526,23 @@ class GridData(QObject):
             return False
         return unrealized_pnl <= -self.stop_loss_config.loss_amount
 
-    def update_market_data(self, data: dict) -> None:
+    def update_market_data(self, data) -> None:
         """更新市场数据"""
         try:
-            # 获取价格
-            price_str = data.get("lastPr")
+            # 查找价格
+            # print(type(data), data)
+            price_str = find_value(data, "lastPr")
             if not price_str:
                 return   
             new_price = Decimal(str(price_str))
             self.last_price = new_price
             
-            # 更新时间
-            timestamp = int(data.get("ts", "0"))
-            self.last_update_time = datetime.fromtimestamp(timestamp/1000)
-            
+            # 查找时间戳
+            timestamp = find_value(data, "ts")
+            if timestamp:
+                timestamp = int(timestamp)
+                self.last_update_time = datetime.fromtimestamp(timestamp / 1000)
+
             # 计算持仓指标
             position_metrics = self.calculate_position_metrics()
             
@@ -549,12 +553,13 @@ class GridData(QObject):
                 "时间戳": timestamp,
                 "持仓价值": str(position_metrics['total_value']),
                 "持仓均价": str(position_metrics['avg_price']),
-                "持仓盈亏": str(position_metrics['unrealized_pnl'])
+                "持仓盈亏": str(position_metrics['unrealized_pnl']),
+                "实现盈亏": str(self.total_realized_profit),
             })
             
             # 发送更新信号
             self.data_updated.emit(self.uid)
-            
+        
         except Exception as e:
             print(f"更新市场数据错误: {e}")
             print(traceback.format_exc())

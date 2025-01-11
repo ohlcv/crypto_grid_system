@@ -933,7 +933,7 @@ class GridStrategyTab(QWidget):
                 
             # 创建策略
             uid = str(uuid.uuid4())[:8]
-            grid_data = self.strategy_manager.create_strategy(uid, pair, exchange, self.inst_type)
+            grid_data = self.create_strategy(uid, pair, exchange, self.inst_type)
             if not grid_data:
                 raise ValueError("创建策略失败")
                 
@@ -1452,7 +1452,7 @@ class GridStrategyTab(QWidget):
             grid_data.row_dict["操作"] = {"开仓": True, "平仓": True}
             print(f"[GridStrategyTab] 连接策略 {uid} 的数据更新信号")
             grid_data.data_updated.connect(self._update_table_row)  # 确保这行代码执行
-            print(f"[GridStrategyTab] 信号连接完成")
+            print(f"[GridStrategyTab] data_updated 信号连接完成")
         return grid_data
 
     def _handle_strategy_started(self, uid: str):

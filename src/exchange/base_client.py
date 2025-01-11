@@ -71,7 +71,7 @@ class BaseClient(QObject):
     connected = Signal()                      # 连接成功
     disconnected = Signal()                   # 连接断开
     connection_status = Signal(bool)          # is_connected
-    error_occurred = Signal(str)         # error_type, error_message
+    error_occurred = Signal(str)              # error_type, error_message
     ws_status_changed = Signal(dict)          # 添加WS状态变化信号
 
     def __init__(self, inst_type: ExchangeType):

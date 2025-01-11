@@ -52,7 +52,7 @@ class BitgetSpotAPI:
         self.logger.info(f"下现货订单 - {symbol} - {trade_side} - {size}")
         params = {
             "symbol": symbol,
-            "size": str(Decimal(size).quantize(Decimal('0.000001'), rounding=ROUND_HALF_UP)),
+            "size": size,
             "orderType": "market"
         }
         if trade_side == "open":
@@ -70,9 +70,9 @@ class BitgetSpotAPI:
         if client_oid:
             params["clientOid"] = client_oid
 
-        self.logger.info(f"合约-订单-参数: {params}")
+        self.logger.info(f"现货-订单-参数: {params}")
         response = self.order_api.placeOrder(params)
-        self.logger.info(f"合约-下单-返回 - {response}")
+        self.logger.info(f"现货-下单-返回 - {response}")
         return response
 
     @error_handler()
@@ -178,7 +178,7 @@ class BitgetMixAPI:
             "symbol": symbol,
             "side": side,
             "tradeSide": trade_side,
-            "size": str(Decimal(size).quantize(Decimal('0.000001'), rounding=ROUND_HALF_UP)),
+            "size": size,
             "productType": "USDT-FUTURES",
             "marginMode": "crossed",
             "marginCoin": "USDT",

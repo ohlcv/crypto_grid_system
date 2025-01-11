@@ -660,10 +660,10 @@ class GridTrader(QObject):
             is_spot = self.grid_data.inst_type == "SPOT"
 
             # 首先验证投资金额是否满足最小要求
-            invest_amount = level_config.invest_amount
-            min_value = self.grid_data.min_trade_value or Decimal('5')
-            if invest_amount < min_value:
-                raise ValueError(f"投资金额 {invest_amount} USDT 小于最小交易额 {min_value} USDT")
+            # invest_amount = level_config.invest_amount
+            # min_value = self.grid_data.min_trade_value or Decimal('5')
+            # if invest_amount < min_value:
+            #     raise ValueError(f"投资金额 {invest_amount} USDT 小于最小交易额 {min_value} USDT")
 
             # 计算下单数量
             if is_spot:
@@ -679,15 +679,15 @@ class GridTrader(QObject):
             ))
 
             # 检查最小交易量/额
-            min_amount = self.grid_data.min_trade_amount or Decimal('0')
-            min_value = self.grid_data.min_trade_value or Decimal('5')
+            # min_amount = self.grid_data.min_trade_amount or Decimal('0')
+            # min_value = self.grid_data.min_trade_value or Decimal('5')
 
-            if Decimal(str(order_size)) < min_amount:
-                raise ValueError(f"下单数量 {order_size} 小于最小交易量 {min_amount}")
+            # if Decimal(str(order_size)) < min_amount:
+            #     raise ValueError(f"下单数量 {order_size} 小于最小交易量 {min_amount}")
 
-            order_value = Decimal(str(order_size)) * Decimal(str(self.grid_data.last_price))
-            if order_value < min_value:
-                raise ValueError(f"下单金额 {order_value} 小于最小交易额 {min_value}")
+            # order_value = Decimal(str(order_size)) * Decimal(str(self.grid_data.last_price))
+            # if order_value < min_value:
+            #     raise ValueError(f"下单金额 {order_value} 小于最小交易额 {min_value}")
             
             self.logger.debug(f"[GridTrader] 订单详情:")
             self.logger.debug(f"  网格层级: {level}")
@@ -782,7 +782,7 @@ class GridTrader(QObject):
             if not is_spot:
                 order_size = float(level_config.filled_amount / self.grid_data.last_price)
             else:
-                order_size = float(level_config.invest_amount / self.grid_data.last_price)
+                order_size = float(level_config.invest_amount / self.grid_data.last_price) * 0.998
                 
             # 使用缓存的精度进行处理
             precision = self.grid_data.quantity_precision or 4  # 默认精度为4
@@ -792,15 +792,15 @@ class GridTrader(QObject):
             ))
             
             # 检查最小交易量/额
-            min_amount = self.grid_data.min_trade_amount or Decimal('0')
-            min_value = self.grid_data.min_trade_value or Decimal('5')
+            # min_amount = self.grid_data.min_trade_amount or Decimal('0')
+            # min_value = self.grid_data.min_trade_value or Decimal('5')
             
-            if Decimal(str(order_size)) < min_amount:
-                raise ValueError(f"下单数量 {order_size} 小于最小交易量 {min_amount}")
+            # if Decimal(str(order_size)) < min_amount:
+            #     raise ValueError(f"下单数量 {order_size} 小于最小交易量 {min_amount}")
                 
-            order_value = Decimal(str(order_size)) * Decimal(str(self.grid_data.last_price))
-            if order_value < min_value:
-                raise ValueError(f"下单金额 {order_value} 小于最小交易额 {min_value}")
+            # order_value = Decimal(str(order_size)) * Decimal(str(self.grid_data.last_price))
+            # if order_value < min_value:
+            #     raise ValueError(f"下单金额 {order_value} 小于最小交易额 {min_value}")
             
             self.logger.debug(f"[GridTrader] 止盈订单详情:")
             self.logger.debug(f"  网格层级: {level}")
@@ -811,15 +811,25 @@ class GridTrader(QObject):
 
             # 生成客户端订单ID
             client_order_id = f"grid_{self.grid_data.uid}_{level}_{int(time.time()*1000)}_tp"
-            
+
             # 发送止盈订单
-            response = self.client.rest_api.place_order(
-                symbol=self.grid_data.pair.replace('/', ''),
-                size=str(order_size),
-                trade_side="close",
-                side="sell" if not is_long else "buy",
-                client_oid=client_order_id
-            )
+            if is_spot:
+                # 现货止盈订单，考虑手续费磨损，减去 0.2% 的数量
+                response = self.client.rest_api.place_order(
+                    symbol=self.grid_data.pair.replace('/', ''),
+                    size=str(order_size),  # 使用调整后的数量
+                    trade_side="close",  # 现货API会根据trade_side自动设置买卖方向
+                    client_oid=client_order_id
+                )
+            else:
+                # 合约止盈订单
+                response = self.client.rest_api.place_order(
+                    symbol=self.grid_data.pair.replace('/', ''),
+                    size=str(order_size),
+                    trade_side="close",
+                    side="sell" if not is_long else "buy",
+                    client_oid=client_order_id
+                )
             self.logger.info(f"[GridTrader] 止盈订单响应: {response}")
 
             # 处理下单响应

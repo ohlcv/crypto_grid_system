@@ -8,6 +8,7 @@ from datetime import datetime
 from qtpy.QtCore import QObject, Signal
 
 from src.exchange.base_client import BaseClient
+from src.utils.common.tools import find_value
 from .grid_core import GridData, GridDirection
 from .grid_trader import GridTrader
 
@@ -102,7 +103,7 @@ class GridStrategyManager(QObject):
                 return
 
             normalized_pair = pair.replace('/', '')
-            # print(f"\n[GridStrategyManager] === 处理市场数据 === {normalized_pair}")
+            print(f"\n[GridStrategyManager] === 处理市场数据 === {normalized_pair}")
             # print(f"[GridStrategyManager] 原始数据: {data}")
 
             # 获取所有运行中的策略ID
@@ -122,7 +123,7 @@ class GridStrategyManager(QObject):
                     affected_strategies.append(uid)
 
             # 只有匹配的交易对且策略在运行时才处理
-            # print(f"[GridStrategyManager] 行情交易对: {normalized_pair} 找到相关策略: {affected_strategies}")
+            print(f"[GridStrategyManager] 行情交易对: {normalized_pair} 找到相关策略: {affected_strategies}")
             for uid in affected_strategies:
                 try:
                     grid_data = self._data[uid]
@@ -139,15 +140,12 @@ class GridStrategyManager(QObject):
                     if not operation_status.get("开仓", True) and not operation_status.get("平仓", True):
                         continue  # 如果开平仓都被禁用，跳过更新
 
-                    # 检查数据完整性
-                    if "lastPr" not in data or "ts" not in data:
+                    # 检查数据完整性 - 修正这里的逻辑
+                    price_str = find_value(data, "lastPr")
+                    timestamp = find_value(data, "ts")
+                    if not price_str or not timestamp:  # 改为检查是否为空
+                        print(f"[GridStrategyManager] 数据不完整: price={price_str}, timestamp={timestamp}")
                         continue
-
-                    # print(f"[GridStrategyManager] 更新策略数据:")
-                    # print(f"  交易对: {normalized_pair}")
-                    # print(f"  策略ID: {uid}")
-                    # print(f"  最新价格: {data.get('lastPr')}")
-                    # print(f"  时间戳: {data.get('ts')}")
 
                     # 更新策略数据
                     grid_data.update_market_data(data)
