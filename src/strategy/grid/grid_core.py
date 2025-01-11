@@ -557,6 +557,7 @@ class GridData(QObject):
             
         except Exception as e:
             print(f"更新市场数据错误: {e}")
+            print(traceback.format_exc())
 
     def get_last_filled_level(self) -> Optional[int]:
         """获取最后一个已成交的层级"""

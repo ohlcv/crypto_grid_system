@@ -145,20 +145,22 @@ class BGWebSocketClient(QObject):
                     "channel": data.get("arg", {}).get("channel"),
                     "symbol": data.get("arg", {}).get("instId")
                 }
-                
+                    
             # 处理行情数据消息
             if "data" in data and "arg" in data:
+                data_content = data["data"][0] if isinstance(data.get("data"), list) else data.get("data")
                 return {
                     "channel": data["arg"].get("channel"),
                     "symbol": data["arg"].get("instId"),
                     "ts": data.get("ts"),
-                    "data": data["data"][0] if isinstance(data.get("data"), list) else data.get("data")
+                    "lastPr": data_content.get("lastPr"),  # 确保包含价格字段
+                    "data": data_content
                 }
-                
+                    
             return None
-            
+                
         except Exception as e:
-            self.logger.error(f"消息格式化错误: {str(e)}\n原始数据: {data}")
+            self.logger.error(f"消息格式化错误: {e}\n原始数据: {data}")
             return None
 
     @property

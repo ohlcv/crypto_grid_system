@@ -1,5 +1,6 @@
 # grid_strategy_settings.py
 from decimal import Decimal
+import traceback
 import uuid
 from qtpy.QtWidgets import (
     QDialog, QVBoxLayout, QTableWidget, QLineEdit, QPushButton, QHBoxLayout,
@@ -321,14 +322,38 @@ class GridDialog(QDialog):
         input_field.setValidator(validator)
         return input_field
 
-    def validate_input(self, text, data_type, field_name, min_value=0):
-        """验证输入值"""
+    def validate_input(self, text, data_type, field_name, min_value=0, min_trade_value=5):
+        """验证输入值
+        Args:
+            text: 输入文本
+            data_type: 数据类型（int/float）
+            field_name: 字段名称
+            min_value: 最小允许值（默认0）
+            min_trade_value: 最小交易额（默认5 USDT）
+        """
         try:
             value = data_type(text)
             if value < min_value:
                 raise ValueError(f"{field_name} 不能小于 {min_value}！")
+                
+            # 如果是预算资金，验证每格投资额
+            if field_name == "预算资金":
+                # 获取网格层数
+                layers_text = self.grid_layers_input.text()
+                if layers_text:
+                    layers = int(layers_text)
+                    if layers > 0:
+                        step = value / layers
+                        if step < min_trade_value:
+                            raise ValueError(
+                                f"每格投资金额 ({step:.2f} USDT) 小于最小交易额 {min_trade_value} USDT\n"
+                                f"请增加总预算或减少网格层数！"
+                            )
+                    
             return value
-        except ValueError:
+        except ValueError as e:
+            if str(e).startswith(field_name):
+                raise
             raise ValueError(f"请输入有效的 {field_name}！")
 
     def generate_grid(self):
@@ -340,8 +365,8 @@ class GridDialog(QDialog):
                 (self.grid_layers_input, "层数"),
                 (self.build_interval_input, "间隔%"),
                 (self.take_profit_input, "止盈%"),
-                (self.open_rebound_input, "开仓反弹%"),  # 修改这里的变量名
-                (self.close_rebound_input, "平仓反弹%"),  # 修改这里的变量名
+                (self.open_rebound_input, "开仓反弹%"),
+                (self.close_rebound_input, "平仓反弹%"),
             ]
             for field, name in required_fields:
                 if not field.text().strip():
@@ -352,16 +377,21 @@ class GridDialog(QDialog):
             layers = self.validate_input(self.grid_layers_input.text(), int, "层数", min_value=1)
             build_interval = self.validate_input(self.build_interval_input.text(), float, "间隔%")
             take_profit = self.validate_input(self.take_profit_input.text(), float, "止盈%")
-            open_callback = self.validate_input(self.open_rebound_input.text(), float, "开仓反弹%")  # 修改这里的变量名
-            close_callback = self.validate_input(self.close_rebound_input.text(), float, "平仓反弹%")  # 修改这里的变量名
-
+            open_callback = self.validate_input(self.open_rebound_input.text(), float, "开仓反弹%")
+            close_callback = self.validate_input(self.close_rebound_input.text(), float, "平仓反弹%")
 
             # 计算每格投入
             step = budget / layers
+            if step < 5:  # 再次验证每格投资额
+                raise ValueError(
+                    f"每格投资金额 ({step:.2f} USDT) 小于最小交易额 5 USDT\n"
+                    f"请增加总预算或减少网格层数！"
+                )
+
             # 清空表格重新生成
             self.table.clear_table()
 
-            # 生成网格时也要使用新的字段名
+            # 生成网格层
             for i in range(layers):
                 row_data = {
                     "间隔%": round(build_interval, 2),
@@ -380,6 +410,10 @@ class GridDialog(QDialog):
         except ValueError as e:
             print(f"[GridDialog] 生成网格错误: {str(e)}")
             QMessageBox.critical(self, "错误", str(e))
+        except Exception as e:
+            print(f"[GridDialog] 生成网格出现意外错误: {str(e)}")
+            print(f"[GridDialog] 错误详情: {traceback.format_exc()}")
+            QMessageBox.critical(self, "错误", f"生成网格失败: {str(e)}")
 
     def load_grid_data(self):
         """加载网格数据到表格"""

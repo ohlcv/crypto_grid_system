@@ -128,6 +128,7 @@ class GridTrader(QObject):
         print(f"  交易对: {self.grid_data.pair}")
         print(f"  方向: {self.grid_data.direction}")
         print(f"  总层数: {len(self.grid_data.grid_levels)}")
+        print(f"  运行标志: {self._running}")
         
         last_process_time = time.time()
         min_process_interval = 0.1  # 最小处理间隔（秒）
@@ -693,6 +694,12 @@ class GridTrader(QObject):
             level_config = self.grid_data.grid_levels[level]
             is_long = self.grid_data.is_long()
             is_spot = self.grid_data.inst_type == "SPOT"
+
+            # 首先验证投资金额是否满足最小要求
+            invest_amount = level_config.invest_amount
+            min_value = self.grid_data.min_trade_value or Decimal('5')
+            if invest_amount < min_value:
+                raise ValueError(f"投资金额 {invest_amount} USDT 小于最小交易额 {min_value} USDT")
 
             # 计算下单数量
             if is_spot:
