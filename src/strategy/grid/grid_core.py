@@ -235,13 +235,17 @@ class GridData(QObject):
             "尾单价格": None,
             "开仓触发价": None,
             "止盈触发价": None,
+            "实现盈亏": None,    # 新增
+            "总体止盈": None,   # 新增
+            "总体止损": None,   # 新增
             "最后时间": None,
+            "时间戳": None,
             "标识符": self.uid
         }
         self.total_realized_profit = Decimal('0')  # 重置累计盈利
         self.data_updated.emit(self.uid)
 
-    def handle_take_profit(self, level: int, profit_data: dict) -> None:
+    def handle_take_profit(self, level: int, fill_data: dict) -> None:
         """处理止盈成交"""
         with self._lock:
             print(f"\n[GridData] === 处理止盈成交 === Level {level}")
@@ -249,32 +253,37 @@ class GridData(QObject):
                 print(f"[GridData] 错误: 层级 {level} 不存在")
                 return
             
-            # 记录止盈信息
             config = self.grid_levels[level]
-            filled_price = config.filled_price if config.filled_price else Decimal('0')
-            profit_price = Decimal(str(profit_data.get('filled_price', '0')))
-            filled_amount = config.filled_amount if config.filled_amount else Decimal('0')
-            
-            # 计算利润
-            if filled_price and profit_price and filled_amount:
-                profit = (profit_price - filled_price) * filled_amount
-                if not self.is_long():
-                    profit = -profit
-                print(f"[GridData] 止盈计算:")
-                print(f"  开仓价格: {filled_price}")
-                print(f"  平仓价格: {profit_price}")
-                print(f"  交易数量: {filled_amount}")
-                print(f"  实现利润: {profit}")
-                # TODO: 这里可以添加利润统计逻辑
-            
-            # 重置该层状态
-            if self.reset_level(level):
-                print(f"[GridData] 层级 {level} 重置成功")
-                # 发送更新信号 - 仅在成功重置后发送
-                self.data_updated.emit(self.uid)
-                print(f"[GridData] 数据更新信号已发送")
-            else:
-                print(f"[GridData] 错误: 层级 {level} 重置失败")
+            try:
+                # 直接使用收益数据
+                realized_profit = Decimal(str(fill_data.get('profit', '0'))) - Decimal(str(fill_data['fee']))
+
+                print(f"[GridData] 盈亏计算:")
+                print(f"  收益: {fill_data.get('profit', '0')}")
+                print(f"  手续费: {fill_data['fee']}")
+                print(f"  净盈亏: {realized_profit}")
+
+                # 记录上次止盈价格（用于下次开仓判断）
+                setattr(config, 'last_tp_price', Decimal(str(fill_data['filled_price'])))
+
+                # 更新累计盈亏
+                self.total_realized_profit += realized_profit
+                self.row_dict["实现盈亏"] = str(self.total_realized_profit)
+
+                print(f"[GridData] 累计已实现盈亏: {self.total_realized_profit}")
+                
+                # 重置该层状态
+                if self.reset_level(level):
+                    print(f"[GridData] 层级 {level} 重置成功")
+                    # 发送更新信号 - 仅在成功重置后发送
+                    self.data_updated.emit(self.uid)
+                    print(f"[GridData] 数据更新信号已发送")
+                else:
+                    print(f"[GridData] 错误: 层级 {level} 重置失败")
+                    
+            except Exception as e:
+                print(f"[GridData] 处理止盈错误: {e}")
+                print(f"[GridData] 错误详情: {traceback.format_exc()}")
 
     def update_order_fill(self, level: int, order_data: dict, trade_side: str = "open") -> None:
         """
@@ -362,13 +371,6 @@ class GridData(QObject):
                     profit = -profit
                 fee = Decimal(str(order_data.get('fee', '0')))
                 total_profit = profit - fee
-                # print(f"[GridData] 平仓计算:")
-                # print(f"  开仓价格: {level_config.filled_price}")
-                # print(f"  平仓价格: {order_data['filled_price']}")
-                # print(f"  交易数量: {order_data['filled_amount']}")
-                # print(f"  手续费: {fee}")
-                # print(f"  实现盈亏: {total_profit}")
-                # 在平仓后不立即更新表格数据，因为会在 handle_take_profit 中重置状态
             # 发出更新信号
             self.data_updated.emit(self.uid)
             print(f"[GridData] 数据更新完成，已发送更新信号")
@@ -505,8 +507,12 @@ class GridData(QObject):
     def add_realized_profit(self, profit: Decimal):
         """添加已实现盈利"""
         self.total_realized_profit += profit
-        self.row_dict["实现盈亏"] = str(self.total_realized_profit)  # 更新显示
+        # 更新显示
+        self.row_dict["实现盈亏"] = str(self.total_realized_profit)
         self.logger.info(f"[GridData] 更新累计已实现盈利: {self.total_realized_profit}")
+        
+        # 发送更新信号
+        self.data_updated.emit(self.uid)
         
         # 检查是否达到总体止盈条件
         if self.check_take_profit_condition():
@@ -525,44 +531,6 @@ class GridData(QObject):
         if not self.stop_loss_config.enabled or self.stop_loss_config.loss_amount is None:
             return False
         return unrealized_pnl <= -self.stop_loss_config.loss_amount
-
-    def update_market_data(self, data) -> None:
-        """更新市场数据"""
-        try:
-            # 查找价格
-            # print(type(data), data)
-            price_str = find_value(data, "lastPr")
-            if not price_str:
-                return   
-            new_price = Decimal(str(price_str))
-            self.last_price = new_price
-            
-            # 查找时间戳
-            timestamp = find_value(data, "ts")
-            if timestamp:
-                timestamp = int(timestamp)
-                self.last_update_time = datetime.fromtimestamp(timestamp / 1000)
-
-            # 计算持仓指标
-            position_metrics = self.calculate_position_metrics()
-            
-            # 更新表格数据
-            self.row_dict.update({
-                "最后价格": str(self.last_price),
-                "最后时间": self.last_update_time.strftime("%H:%M:%S"),
-                "时间戳": timestamp,
-                "持仓价值": str(position_metrics['total_value']),
-                "持仓均价": str(position_metrics['avg_price']),
-                "持仓盈亏": str(position_metrics['unrealized_pnl']),
-                "实现盈亏": str(self.total_realized_profit),
-            })
-            
-            # 发送更新信号
-            self.data_updated.emit(self.uid)
-        
-        except Exception as e:
-            print(f"更新市场数据错误: {e}")
-            print(traceback.format_exc())
 
     def get_last_filled_level(self) -> Optional[int]:
         """获取最后一个已成交的层级"""
@@ -630,6 +598,44 @@ class GridData(QObject):
     def is_spot(self) -> bool:
         """是否现货"""
         return self.inst_type == "SPOT"
+
+    def update_market_data(self, data) -> None:
+        """更新市场数据"""
+        try:
+            # 查找价格
+            # print(type(data), data)
+            price_str = find_value(data, "lastPr")
+            if not price_str:
+                return   
+            new_price = Decimal(str(price_str))
+            self.last_price = new_price
+            
+            # 查找时间戳
+            timestamp = find_value(data, "ts")
+            if timestamp:
+                timestamp = int(timestamp)
+                self.last_update_time = datetime.fromtimestamp(timestamp / 1000)
+
+            # 计算持仓指标
+            position_metrics = self.calculate_position_metrics()
+            
+            # 更新表格数据
+            self.row_dict.update({
+                "最后价格": str(self.last_price),
+                "最后时间": self.last_update_time.strftime("%H:%M:%S"),
+                "时间戳": timestamp,
+                "持仓价值": str(position_metrics['total_value']),
+                "持仓均价": str(position_metrics['avg_price']),
+                "持仓盈亏": str(position_metrics['unrealized_pnl']),
+                "实现盈亏": str(self.total_realized_profit),
+            })
+            
+            # 发送更新信号
+            self.data_updated.emit(self.uid)
+        
+        except Exception as e:
+            print(f"更新市场数据错误: {e}")
+            print(traceback.format_exc())
 
     def to_dict(self) -> dict:
         """转换为字典格式"""

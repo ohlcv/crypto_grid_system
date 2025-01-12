@@ -101,7 +101,7 @@ class MainWindow(QMainWindow):
                 window_icon = QIcon(window_icon_path)
                 self.setWindowIcon(window_icon)
                 QApplication.instance().setWindowIcon(window_icon)
-                print(f"✅ 主窗口图标加载成功: {window_icon_path}")
+                # print(f"✅ 主窗口图标加载成功: {window_icon_path}")
             
             # 设置标签页图标
             svg_icon_path = resource_path(os.path.join('src', 'ui', 'icons', 'dogecoin256.svg'))
@@ -110,7 +110,7 @@ class MainWindow(QMainWindow):
                 # 为所有标签页设置图标
                 for i in range(self.main_tab_widget.count()):
                     self.main_tab_widget.setTabIcon(i, tab_icon)
-                print(f"✅ 标签栏图标加载成功: {svg_icon_path}")
+                # print(f"✅ 标签栏图标加载成功: {svg_icon_path}")
                 
         except Exception as e:
             print(f"❌ 图标加载失败: {str(e)}\n{traceback.format_exc()}")

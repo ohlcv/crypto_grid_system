@@ -42,7 +42,7 @@ class BGWebSocketClient(QObject):
             self._ws_client.api_key(api_key)\
                 .api_secret_key(api_secret)\
                 .passphrase(passphrase)
-            self.logger.debug(f"验证私有参数：\n{api_key}\n{api_secret}\n{passphrase}")
+            # self.logger.debug(f"验证私有参数：\n{api_key}\n{api_secret}\n{passphrase}")
         
         # 设置回调
         self._ws_client.listener(self._handle_message)

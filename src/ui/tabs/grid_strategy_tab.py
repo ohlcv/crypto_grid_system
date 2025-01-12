@@ -125,31 +125,8 @@ class GridStrategyTab(QWidget):
         """处理私有WS连接成功后的验证"""
         try:
             print("[GridStrategyTab] === 私有WS连接成功，开始验证 ===")
-            # 连接成功后立即获取账户信息验证
-            response = self.exchange_client.rest_api.get_account_info()
-            print(f"[GridStrategyTab] 账户信息响应: {response}")
-            
-            if response.get('code') != '00000':
-                error_msg = f"API验证失败: {response.get('msg')}"
-                print(f"[GridStrategyTab] {error_msg}")
-                self.show_error_message(error_msg)
-                sys.exit(1)
-                return
-                
-            # 验证邀请人ID
-            if not self.check_inviter_id(response):
-                error_msg = "您使用的不是指定的邀请码，程序即将退出！\n请使用 https://partner.bitget.cloud/bg/5BFPY0 注册后使用。"
-                print(f"[GridStrategyTab] Error: {error_msg}")
-                QMessageBox.critical(self, "错误", error_msg)
-                sys.exit(1)
-                
-            print("[GridStrategyTab] 邀请人ID验证通过")
-            
-            # 保存用户ID
-            user_id = response.get('data', {}).get('userId')
-            if user_id:
-                self.user_id_input.setText(str(user_id))
-                self.save_api_config(auto_save=True)
+            # 连接成功后立即进行白名单和邀请人ID验证
+            self._verify_inviter_id()
             
         except Exception as e:
             print(f"[GridStrategyTab] 连接后验证失败: {e}")
@@ -240,24 +217,6 @@ class GridStrategyTab(QWidget):
             "private": private_status
         }
 
-    def check_inviter_id(self, response: dict) -> bool:
-        """检查邀请人ID是否在允许列表中"""
-        try:
-            inviter_id = response.get('data', {}).get('inviterId')
-            if not inviter_id:
-                print(f"[GridStrategyTab] 未找到邀请人ID")
-                return False
-
-            if inviter_id in self.ALLOWED_INVITER_IDS:
-                print(f"[GridStrategyTab] 邀请人ID验证通过: {inviter_id}")
-                return True
-
-            print(f"[GridStrategyTab] 邀请人ID不允许: {inviter_id}")
-            return False
-        except Exception as e:
-            print(f"[GridStrategyTab] 检查邀请人ID失败: {e}")
-            return False
-
     def _verify_inviter_id(self):
         """验证邀请人ID"""
         try:
@@ -281,8 +240,8 @@ class GridStrategyTab(QWidget):
                 print(f"\n[GridStrategyTab] === 用户信息检查 ===")
                 print(f"当前用户 UID: {user_id}")
                 print(f"邀请人 UID: {inviter_id}")
-                print(f"白名单列表: {self.WHITELIST_UIDS}")
-                print(f"允许邀请人列表: {self.ALLOWED_INVITER_IDS}")
+                # print(f"白名单列表: {self.WHITELIST_UIDS}")
+                # print(f"允许邀请人列表: {self.ALLOWED_INVITER_IDS}")
                 print(f"是否白名单用户: {'是' if user_id in self.WHITELIST_UIDS else '否'}")
                 print(f"是否被邀请用户: {'是' if inviter_id in self.ALLOWED_INVITER_IDS else '否'}")
 
@@ -296,7 +255,7 @@ class GridStrategyTab(QWidget):
                     print(f"[GridStrategyTab] ✅ 邀请人 {inviter_id} 验证通过")
                     return
                 else:
-                    error_msg = "您使用的不是指定的邀请码！\n请使用 https://partner.bitget.cloud/bg/5BFPY0 注册后使用。"
+                    error_msg = "您不是邀请用户！\n请使用指定邀请链接注册后使用。"
                     print(f"[GridStrategyTab] ❌ 验证失败: 非指定邀请码用户")
                     print(f"[GridStrategyTab] 当前邀请人: {inviter_id}")
                     print(f"[GridStrategyTab] 允许邀请人: {self.ALLOWED_INVITER_IDS}")
@@ -347,10 +306,8 @@ class GridStrategyTab(QWidget):
         if not self.exchange_client:
             self.show_error_message("客户端未初始化，请先保存API配置。")
             return
-            
+        print("[GridStrategyTab] 开始测试API连接")
         try:
-            print("[GridStrategyTab] 开始测试API连接")
-            
             # 1. 检查WebSocket连接状态
             result = self.exchange_client.test_connection()
             ws_status = result['ws_status']
@@ -368,46 +325,17 @@ class GridStrategyTab(QWidget):
                 self._disconnect_client()
                 return
 
-            # 2. WebSocket已连接，验证账户信息
-            response = self.exchange_client.rest_api.get_account_info()
-            print(f"[GridStrategyTab] 账户信息响应: {response}")
+            # 2. 如果WebSocket连接成功，进行验证
+            self._verify_inviter_id()
             
-            if response.get('code') != '00000':
-                error_msg = f"API验证失败: {response.get('msg')}"
-                print(f"[GridStrategyTab] {error_msg}")
-                QMessageBox.critical(self, "错误", error_msg)
-                self._reset_api_inputs()
-                self._disconnect_client()
-                return
-                
-            # 3. 验证邀请人ID
-            if not self.check_inviter_id(response):
-                error_msg = "您不是邀请用户\n请使用指定邀请链接注册后使用。"
-                print(f"[GridStrategyTab] Error: {error_msg}")
-                QMessageBox.critical(self, "错误", error_msg)
-                self._reset_api_inputs()
-                self._disconnect_client()
-                return
-                
-            # 4. 所有验证通过
-            user_id = response.get('data', {}).get('userId')
-            if user_id:
-                self.show_message("成功", "API连接测试通过！")
-                self.user_id_input.setText(str(user_id))
-                self.save_api_config(auto_save=True)
-            else:
-                error_msg = "无法获取用户ID"
-                QMessageBox.critical(self, "错误", error_msg)
-                self._reset_api_inputs()
-                self._disconnect_client()
+            # 3. 如果验证通过，显示成功消息
+            self.show_message("连接测试", "API连接测试成功!\n您的账户已通过验证，可以开始使用。")
 
         except Exception as e:
-            print(f"[GridStrategyTab] 测试连接错误: {e}")
+            error_msg = f"连接测试失败: {str(e)}"
+            print(f"[GridStrategyTab] {error_msg}")
             print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
-            error_msg = f"验证失败: {str(e)}"
-            QMessageBox.critical(self, "错误", error_msg)
-            self._reset_api_inputs()
-            self._disconnect_client()
+            self.show_error_message(error_msg)
 
     def _handle_client_created(self, client: BaseClient):
         """处理客户端创建"""
@@ -417,8 +345,7 @@ class GridStrategyTab(QWidget):
                 print("[GridStrategyTab] 客户端实例匹配，重新连接信号")
                 self._connect_client_signals(client)
                 self.update_exchange_status(client.is_connected)
-                # 进行身份验证
-                self.test_connection()  # 复用test_connection方法进行验证
+                self.test_connection()
                 self._resubscribe_all_pairs()
 
         except Exception as e:
