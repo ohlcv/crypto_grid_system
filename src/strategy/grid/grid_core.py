@@ -1,6 +1,7 @@
 # src/strategy/grid/grid_core.py
 
 import threading
+import time
 import traceback
 from typing import Any, Dict, Optional, List
 from decimal import Decimal
@@ -123,6 +124,9 @@ class GridData(QObject):
         self.price_precision: Optional[int] = None    # 价格精度
         self.min_trade_amount: Optional[Decimal] = None  # 最小交易数量
         self.min_trade_value: Optional[Decimal] = None   # 最小交易额
+        # 添加节流控制
+        self._last_update_time = 0
+        self._min_update_interval = 0.1  # 最小更新间隔(秒)
 
         self.row_dict = {
             "交易所": exchange,
@@ -476,66 +480,96 @@ class GridData(QObject):
             print(f"[GridData] 错误详情: {traceback.format_exc()}")
 
     def calculate_position_metrics(self) -> dict:
-        """
-        计算持仓相关指标
-        Returns:
-            dict: {
-                'total_value': 持仓总价值,
-                'avg_price': 持仓均价,
-                'unrealized_pnl': 未实现盈亏
-            }
-        """
+        """计算持仓相关指标"""
         try:
-            if not self.last_price:
+            # print(f"\n[GridData] === 计算持仓指标 ===")
+            # print(f"当前价格: {self.last_price}")
+            
+            # 确保 last_price 是 Decimal 类型
+            try:
+                current_price = Decimal(str(self.last_price)) if self.last_price else None
+            except (TypeError, ValueError):
+                current_price = None
+                
+            if not current_price:
+                # print("[GridData] 当前无有效价格")
                 return {
                     'total_value': Decimal('0'),
                     'avg_price': Decimal('0'),
                     'unrealized_pnl': Decimal('0')
                 }
 
+            # print(f"网格配置数: {len(self.grid_levels)}")
+            
             total_size = Decimal('0')
-            total_value = Decimal('0')
             total_cost = Decimal('0')
-            current_price = self.last_price
 
-            # 遍历所有已开仓的网格
+            # 检查每个网格的状态
             for level, config in self.grid_levels.items():
-                if config.is_filled and config.filled_amount and config.filled_price:
-                    size = config.filled_amount
-                    entry_price = config.filled_price
+                # print(f"\n检查网格 {level}:")
+                # print(f"  已开仓: {config.is_filled}")
+                # print(f"  开仓量: {config.filled_amount}")
+                # print(f"  开仓价: {config.filled_price}")
+                
+                if not config.is_filled:
+                    # print("  未开仓,跳过")
+                    continue
                     
-                    # 累加持仓数量和成本
+                try:
+                    # 确保数据类型转换正确
+                    size = Decimal(str(config.filled_amount)) if config.filled_amount else None
+                    entry_price = Decimal(str(config.filled_price)) if config.filled_price else None
+                    
+                    if not (size and entry_price):
+                        # print("  无效的开仓数据,跳过")
+                        continue
+                    
+                    # 累加并打印
                     total_size += size
                     total_cost += size * entry_price
+                    # print(f"  累计持仓量: {total_size}")
+                    # print(f"  累计成本: {total_cost}")
+                    
+                except (TypeError, ValueError) as e:
+                    # print(f"  数据转换错误: {e}")
+                    continue
 
-            # 计算持仓均价
-            avg_price = total_cost / total_size if total_size > 0 else Decimal('0')
-            
-            # 计算当前持仓价值
-            total_value = total_size * current_price if total_size > 0 else Decimal('0')
-            
-            # 计算未实现盈亏
+            # 计算结果
             if total_size > 0:
-                if self.is_long():
-                    unrealized_pnl = (current_price - avg_price) * total_size
-                else:
-                    unrealized_pnl = (avg_price - current_price) * total_size
+                avg_price = (total_cost / total_size).quantize(Decimal('0.0000'))
+                total_value = (total_size * current_price).quantize(Decimal('0.00'))
+                unrealized_pnl = (
+                    (current_price - avg_price) * total_size if self.is_long()
+                    else (avg_price - current_price) * total_size
+                ).quantize(Decimal('0.0000'))
             else:
+                avg_price = Decimal('0')
+                total_value = Decimal('0')
                 unrealized_pnl = Decimal('0')
-
-            return {
-                'total_value': total_value.quantize(Decimal('0.00')),
-                'avg_price': avg_price.quantize(Decimal('0.0000')),
-                'unrealized_pnl': unrealized_pnl.quantize(Decimal('0.0000'))
+                
+            result = {
+                'total_value': total_value,
+                'avg_price': avg_price,
+                'unrealized_pnl': unrealized_pnl
             }
+            
+            # print("\n计算结果:")
+            # print(f"  总持仓量: {total_size}")
+            # print(f"  持仓均价: {result['avg_price']}")
+            # print(f"  持仓价值: {result['total_value']}")
+            # print(f"  未实现盈亏: {result['unrealized_pnl']}")
+            
+            return result
+
         except Exception as e:
-            self.logger.error(f"计算持仓指标错误: {e}")
+            print(f"[GridData] 计算持仓指标错误: {e}")
+            print(f"[GridData] 错误详情: {traceback.format_exc()}")
             return {
                 'total_value': Decimal('0'),
                 'avg_price': Decimal('0'),
                 'unrealized_pnl': Decimal('0')
             }
-
+    
     def add_realized_profit(self, profit: Decimal):
         """添加已实现盈利"""
         self.total_realized_profit += profit
@@ -634,7 +668,10 @@ class GridData(QObject):
     def update_market_data(self, data) -> None:
         """更新市场数据"""
         try:
-            # 查找价格
+            # 检查更新间隔
+            current_time = time.time()
+            if current_time - self._last_update_time < self._min_update_interval:
+                return
             # print(type(data), data)
             price_str = find_value(data, "lastPr")
             if not price_str:

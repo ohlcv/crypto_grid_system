@@ -103,7 +103,7 @@ class GridStrategyManager(QObject):
                 return
 
             normalized_pair = pair.replace('/', '')
-            print(f"\n[GridStrategyManager] === 处理市场数据 === {normalized_pair}")
+            # print(f"\n[GridStrategyManager] === 处理市场数据 === {normalized_pair}")
             # print(f"[GridStrategyManager] 原始数据: {data}")
 
             # 获取所有运行中的策略ID
@@ -123,7 +123,7 @@ class GridStrategyManager(QObject):
                     affected_strategies.append(uid)
 
             # 只有匹配的交易对且策略在运行时才处理
-            print(f"[GridStrategyManager] 行情交易对: {normalized_pair} 找到相关策略: {affected_strategies}")
+            # print(f"[GridStrategyManager] 行情交易对: {normalized_pair} 找到相关策略: {affected_strategies}")
             for uid in affected_strategies:
                 try:
                     grid_data = self._data[uid]
@@ -211,24 +211,24 @@ class GridStrategyManager(QObject):
     def stop_strategy(self, uid: str) -> bool:
         """暂停策略运行"""
         print(f"\n[GridStrategyManager] === 暂停策略运行 === {uid}")
-        with self._lock:
-            if uid not in self._strategies:
-                print(f"[GridStrategyManager] 策略 {uid} 不在运行中")
-                return True  # 如果策略本来就没运行，认为停止成功
-            try:
-                trader = self._strategies[uid]
-                success = trader.stop()
-                if success:
-                    del self._strategies[uid]  # 从运行列表中移除
-                    if uid in self._data:
-                        self._data[uid].row_dict["运行状态"] = "已暂停"
-                    self.strategy_stopped.emit(uid)
-                    print(f"[GridStrategyManager] 策略 {uid} 已暂停")
-                return success
+        # with self._lock:
+        if uid not in self._strategies:
+            print(f"[GridStrategyManager] 策略 {uid} 不在运行中")
+            return True  # 如果策略本来就没运行，认为停止成功
+        try:
+            trader = self._strategies[uid]
+            success = trader.stop()
+            if success:
+                del self._strategies[uid]  # 从运行列表中移除
+                if uid in self._data:
+                    self._data[uid].row_dict["运行状态"] = "已暂停"
+                self.strategy_stopped.emit(uid)
+                print(f"[GridStrategyManager] 策略 {uid} 已暂停")
+            return success
 
-            except Exception as e:
-                print(f"[GridStrategyManager] 暂停策略失败: {e}")
-                return False
+        except Exception as e:
+            print(f"[GridStrategyManager] 暂停策略失败: {e}")
+            return False
         
     def _handle_strategy_error(self, uid: str, error_msg: str):
         """处理策略错误"""
@@ -330,3 +330,32 @@ class GridStrategyManager(QObject):
         """处理策略错误"""
         print(f"[GridStrategyManager] Strategy error - {uid}: {error_msg}")
         self.strategy_error.emit(uid, error_msg)
+
+    def close_positions(self, uid: str, exchange_client: BaseClient) -> bool:
+        """
+        平掉指定策略的所有持仓
+        返回: 是否成功平仓
+        """
+        print(f"\n[GridStrategyManager] === 平仓操作 === {uid}")
+        try:
+            grid_data = self._data.get(uid)
+            if not grid_data:
+                raise ValueError("策略数据不存在")
+                
+            # 创建临时的GridTrader实例来执行平仓
+            trader = GridTrader(grid_data, exchange_client)
+            
+            # 连接错误信号以便转发
+            trader.error_occurred.connect(self._handle_strategy_error)
+            
+            # 执行平仓
+            success = trader._close_all_positions("手动平仓")
+            
+            return success
+            
+        except Exception as e:
+            error_msg = f"平仓失败: {str(e)}"
+            print(f"[GridStrategyManager] {error_msg}")
+            print(f"[GridStrategyManager] 错误详情: {traceback.format_exc()}")
+            self.strategy_error.emit(uid, error_msg)
+            return False

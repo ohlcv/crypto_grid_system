@@ -500,7 +500,7 @@ class GridTrader(QObject):
         """检查止盈条件"""
         operation_status = self.grid_data.row_dict.get("操作", {})
         can_close = operation_status.get("平仓", False)
-        print(f"[GridTrader] 检查平仓状态: {can_close}")
+        # print(f"[GridTrader] 检查平仓状态: {can_close}")
         if not can_close:
             print(f"[GridTrader] 平仓操作被禁用")
             return False
@@ -926,8 +926,14 @@ class GridTrader(QObject):
             self.logger.error(f"[GridTrader] 错误详情: {traceback.format_exc()}")
             self.handle_error(error_msg)
 
-    def _close_all_positions(self, reason: str):
-        """平掉所有持仓并停止策略"""
+    def _close_all_positions(self, reason: str) -> bool:
+        """
+        平掉所有持仓并返回是否成功
+        Args:
+            reason: 平仓原因
+        Returns:
+            bool: 是否成功平仓
+        """
         try:
             # 记录日志
             self.logger.info(f"{self.grid_data.inst_type} {self.grid_data.uid} {self.grid_data.pair} 准备全平...")
@@ -939,9 +945,9 @@ class GridTrader(QObject):
             
             if metrics['total_value'] <= 0:
                 self.logger.info("  无持仓，无需平仓")
-                return
+                return True
 
-            # 构建平仓订单
+            # 准备平仓参数
             symbol = self.grid_data.pair.replace('/', '')
             is_spot = self.grid_data.inst_type == "SPOT"
             is_long = self.grid_data.is_long()
@@ -956,40 +962,91 @@ class GridTrader(QObject):
                 self.logger.info(f"  平仓响应: {response}")
                 
                 if response.get('code') != '00000':
-                    self.logger.error(f"  平仓失败: {response}")
-                    raise ValueError(f"平仓失败: {response.get('msg', '未知错误')}")
+                    error_msg = f"合约平仓失败: {response.get('msg', '未知错误')}"
+                    self.logger.error(f"  {error_msg}")
+                    raise ValueError(error_msg)
+                    
+                # 检查成交明细
+                success_list = response.get('data', {}).get('successList', [])
+                failure_list = response.get('data', {}).get('failureList', [])
+                
+                if failure_list:
+                    error_msg = f"部分订单失败: {failure_list}"
+                    self.logger.error(f"  {error_msg}")
+                    raise ValueError(error_msg)
             
             # 现货平仓
             else:
                 self.logger.debug("  执行现货全部平仓...")
-                # 使用市价单平掉所有现货持仓
+                failed_levels = []
+                
+                # 遍历所有已开仓的网格层
                 for level, config in self.grid_data.grid_levels.items():
-                    if config.is_filled and config.filled_amount:
+                    if not config.is_filled or not config.filled_amount:
+                        continue
+                        
+                    try:
+                        # 计算平仓数量（考虑手续费）
+                        close_amount = config.filled_amount * Decimal('0.998')
+                        
+                        # 使用精度处理
+                        precision = self.grid_data.quantity_precision or 4
+                        close_amount = float(close_amount.quantize(
+                            Decimal('0.' + '0' * precision),
+                            rounding=ROUND_HALF_UP
+                        ))
+                        
+                        # 下平仓单
                         response = self.client.rest_api.place_order(
                             symbol=symbol,
-                            size=str(config.filled_amount),
+                            size=str(close_amount),
                             trade_side="close",
                             side="sell" if is_long else "buy"
                         )
-                        self.logger.info(f"  平仓响应: {response}")
                         
                         if response.get('code') != '00000':
-                            self.logger.error(f"  平仓失败: {response}")
-                            raise ValueError(f"平仓失败: {response.get('msg', '未知错误')}")
+                            failed_levels.append(level)
+                            continue
+                            
+                        # 等待订单成交
+                        time.sleep(0.5)
+                        
+                        # 获取成交明细
+                        fills = self.client.rest_api.get_fills(
+                            symbol=symbol,
+                            order_id=response['data']['orderId']
+                        )
+                        
+                        if fills.get('code') == '00000':
+                            fill_data = self._process_fills(fills.get('data', []), True)
+                            if fill_data:
+                                # 处理该层平仓
+                                self.grid_data.handle_take_profit(level, fill_data)
+                        else:
+                            failed_levels.append(level)
+                            
+                    except Exception as e:
+                        self.logger.error(f"  平仓层级 {level} 失败: {e}")
+                        failed_levels.append(level)
+                        
+                if failed_levels:
+                    error_msg = f"以下层级平仓失败: {failed_levels}"
+                    self.logger.error(f"  {error_msg}")
+                    raise ValueError(error_msg)
             
             # 重置网格配置
             self.grid_data.reset_to_initial()
             
-            # 停止策略
-            self.stop()
-            
             # 更新UI显示
-            self.grid_data.row_dict["运行状态"] = f"已停止({reason})"
+            self.grid_data.row_dict["运行状态"] = f"已平仓({reason})"
             self.grid_data.data_updated.emit(self.grid_data.uid)
             
-            print(f"[GridTrader] 平仓完成 - {self.grid_data.uid}")
+            self.logger.info(f"[GridTrader] 平仓完成 - {self.grid_data.uid}")
+            return True
             
         except Exception as e:
             error_msg = f"平仓出错: {str(e)}"
             self.logger.error(f"[GridTrader] {error_msg}")
+            self.logger.error(f"[GridTrader] 错误详情: {traceback.format_exc()}")
             self.error_occurred.emit(self.grid_data.uid, error_msg)
+            return False

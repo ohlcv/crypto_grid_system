@@ -1222,93 +1222,40 @@ class GridStrategyTab(QWidget):
             self.show_error_message("请先停止策略再进行平仓操作！")
             return
 
-        # 现货网格暂不支持一键平仓
-        if self.inst_type == "SPOT":
-            self.show_error_message("现货网格暂不支持平仓功能")
+        # 获取持仓信息用于确认
+        metrics = grid_data.calculate_position_metrics()
+        if metrics['total_value'] <= 0:
+            self.show_message("提示", "当前无持仓，无需平仓")
             return
 
-        # 合约网格平仓逻辑
-        try:
-            symbol = grid_data.pair.replace('/', '')
-            hold_side = 'long' if grid_data.is_long() else 'short'
-            
-            # 确认平仓操作
-            confirm_msg = (f"确认平仓 {grid_data.pair} ?\n"
-                        f"方向: {'多仓' if grid_data.is_long() else '空仓'}\n"
-                        f"当前层数: {grid_data.row_dict.get('当前层数')}\n"
-                        f"持仓均价: {grid_data.row_dict.get('持仓均价')}\n"
-                        f"持仓价值: {grid_data.row_dict.get('持仓价值')}")
-            
-            response = QMessageBox.question(
-                self, 
-                "平仓确认", 
-                confirm_msg,
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            
-            if response == QMessageBox.StandardButton.Yes:
-                # 执行平仓
-                result = self.exchange_client.rest_api.all_close_positions(
-                    symbol=symbol,
-                    hold_side=hold_side
-                )
-                
-                print(f"[GridStrategyTab] 平仓响应: {result}")
-                
-                if isinstance(result, dict) and result.get('code') == '00000':
-                    # 检查平仓结果
-                    success_list = result.get('data', {}).get('successList', [])
-                    failure_list = result.get('data', {}).get('failureList', [])
-                    
-                    # 如果平仓成功，重置策略到初始状态
-                    if success_list and not failure_list:
-                        # 清空所有网格配置
-                        grid_data.grid_levels.clear()
-                        
-                        # 重置row_dict到初始状态
-                        grid_data.row_dict = {
-                            "交易所": grid_data.exchange,
-                            "交易对": grid_data.pair,
-                            "方向": grid_data.direction.value,
-                            "操作": {"开仓": True, "平仓": True},
-                            "运行状态": "已添加",
-                            "当前层数": None,
-                            "持仓价值": None,
-                            "持仓盈亏": None,
-                            "持仓均价": None,
-                            "最后价格": None,
-                            "尾单价格": None,
-                            "开仓触发价": None,
-                            "止盈触发价": None,
-                            "最后时间": None,
-                            "标识符": uid
-                        }
-                        
-                        # 发送更新信号
-                        grid_data.data_updated.emit(uid)
-                    
-                    # 构建结果消息
-                    result_msg = f"{grid_data.pair} 平仓结果:\n"
-                    if success_list:
-                        result_msg += "成功平仓订单:\n"
-                        for order in success_list:
-                            result_msg += f"订单ID: {order.get('orderId')}\n"
-                    if failure_list:
-                        result_msg += "\n失败订单:\n"
-                        for order in failure_list:
-                            result_msg += f"失败原因: {order.get('msg', '未知原因')}\n"
-                    
-                    self.show_message("平仓结果", result_msg)
+        # 确认平仓操作
+        confirm_msg = (f"确认平仓 {grid_data.pair} ?\n"
+                    f"方向: {'多仓' if grid_data.is_long() else '空仓'}\n"
+                    f"当前层数: {grid_data.row_dict.get('当前层数')}\n"
+                    f"持仓均价: {metrics['avg_price']}\n"
+                    f"持仓价值: {metrics['total_value']}")
+        
+        response = QMessageBox.question(
+            self, 
+            "平仓确认", 
+            confirm_msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if response == QMessageBox.StandardButton.Yes:
+            try:
+                # 调用策略管理器的平仓方法
+                success = self.strategy_manager.close_positions(uid, self.exchange_client)
+                if success:
+                    self.show_message("平仓结果", "平仓成功")
                     self.save_data(show_message=False)
                 else:
-                    error_msg = result.get('msg', '未知错误') if isinstance(result, dict) else str(result)
-                    self.show_error_message(f"平仓失败: {error_msg}")
-
-        except Exception as e:
-            error_msg = f"平仓失败: {str(e)}"
-            print(f"[GridStrategyTab] {error_msg}")
-            print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
-            self.show_error_message(error_msg)
+                    self.show_error_message("平仓失败，请查看错误日志")
+            except Exception as e:
+                error_msg = f"平仓失败: {str(e)}"
+                print(f"[GridStrategyTab] {error_msg}")
+                print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
+                self.show_error_message(error_msg)
 
     def delete_strategy(self, uid: str):
         """删除策略"""
