@@ -1,47 +1,5 @@
 {
     "inst_type": "SPOT",
-    "strategies": {
-        "4ecefd98": {
-            "uid": "4ecefd98",
-            "pair": "DOGE/USDT",
-            "exchange": "bitget",
-            "inst_type": "SPOT",
-            "direction": "long",
-            "take_profit_config": {
-                "enabled": false,
-                "profit_amount": null
-            },
-            "stop_loss_config": {
-                "enabled": false,
-                "loss_amount": null
-            },
-            "total_realized_profit": 0.0,
-            "grid_levels": {},
-            "row_dict": {
-                "交易所": "bitget",
-                "交易对": "DOGE/USDT",
-                "方向": "long",
-                "操作": {
-                    "开仓": true,
-                    "平仓": true
-                },
-                "运行状态": "已添加",
-                "当前层数": null,
-                "持仓价值": null,
-                "持仓盈亏": null,
-                "持仓均价": null,
-                "最后价格": null,
-                "尾单价格": null,
-                "开仓触发价": null,
-                "止盈触发价": null,
-                "实现盈亏": null,
-                "总体止盈": null,
-                "总体止损": null,
-                "最后时间": null,
-                "时间戳": null,
-                "标识符": "4ecefd98"
-            }
-        }
-    },
+    "strategies": {},
     "running_strategies": []
 }
