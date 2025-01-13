@@ -77,54 +77,112 @@ class GridTrader(QObject):
     status_changed = Signal(str, str)  # uid, status
     error_occurred = Signal(str, str)  # uid, error_message
 
-    def __init__(self, grid_data: GridData, exchange_client: BaseClient):
+    def __init__(self, grid_data: GridData):
+        """初始化交易器
+        Args:
+            grid_data: 网格策略数据
+        """
         super().__init__()
+        print(f"\n[GridTrader] === 初始化网格交易器 === {grid_data.uid}")
         self.logger = grid_logger
         self.trade_logger = trade_logger
         self.logger.info(f"创建网格交易器 - {grid_data.pair} ({grid_data.uid})")
 
         self.grid_data = grid_data
-        self.client = exchange_client
+        self.client = None  # 初始化时不设置client
         
         self._price_state = PriceState()
         self._order_state = OrderState()
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        self._stop_flag = threading.Event()  # 使用Event来控制运行状态
+        self._stop_flag = threading.Event()
         self._lock = threading.Lock()
-        
-        # 连接信号
-        self.client.order_updated.connect(self._on_order_update)
 
-    @error_handler()
+        print(f"[GridTrader] 交易器初始化完成: {grid_data.uid}")
+        print(f"  交易对: {grid_data.pair}")
+        print(f"  方向: {grid_data.direction}")
+        print(f"  总层数: {len(grid_data.grid_levels)}")
+
+    def set_client(self, client: BaseClient):
+        """设置交易所客户端并连接信号"""
+        print(f"\n[GridTrader] === 设置交易所客户端 === {self.grid_data.uid}")
+        print(f"[GridTrader] 新客户端: {client}")
+        
+        # 如果已有client，先断开旧的信号连接
+        if self.client:
+            try:
+                print("[GridTrader] 断开旧client信号连接")
+                self.client.order_updated.disconnect(self._on_order_update)
+            except TypeError:
+                pass
+
+        self.client = client
+        
+        # 连接新的信号
+        if client:
+            print("[GridTrader] 连接新client的order_updated信号")
+            client.order_updated.connect(self._on_order_update)
+            print("[GridTrader] 客户端设置完成")
+
     def start(self) -> bool:
         """启动策略"""
+        print(f"\n[GridTrader] === 启动策略 === {self.grid_data.uid}")
+        
         if self._running:
+            print(f"[GridTrader] 策略已在运行中")
             return False
+
+        # 如果有旧线程引用，先清理
+        if self._thread:
+            print(f"[GridTrader] 清理旧线程引用: {self._thread.name}")
+            self._thread = None
+
+        # 创建新线程
+        thread_name = f"GridTrader-{self.grid_data.pair}-{self.grid_data.uid}"
+        print(f"[GridTrader] 创建新线程: {thread_name}")
+        self._thread = threading.Thread(
+            name=thread_name,
+            target=self._run_strategy,
+            daemon=True
+        )
+        
         self._running = True
-        self._stop_flag.clear()  # 清除停止标志
-        self._thread = threading.Thread(name=f"GridTrader-{self.grid_data.pair}-{self.grid_data.uid}", target=self._run_strategy, daemon=True)
+        self._stop_flag.clear()
         self._thread.start()
-        self.status_changed.emit(self.grid_data.uid, "运行中")
-        print(f"[GridTrader] 启动策略: {self.grid_data.pair} {self.grid_data.uid}")
+        print(f"[GridTrader] 线程已启动, ID: {self._thread.ident}")
         return True
 
-    @error_handler()
     def stop(self) -> bool:
-        """暂停策略运行"""
+        """停止策略"""
+        print(f"\n[GridTrader] === 停止策略 === {self.grid_data.uid}")
+        
         if not self._running:
-            return False
+            print("[GridTrader] 策略未在运行中")
+            # 清理可能存在的旧线程引用
+            self._thread = None
+            return True
+
         # 设置停止标志
         self._stop_flag.set()
         self._running = False
-        print(f"[GridTrader] 策略已暂停: {self.grid_data.pair} {self.grid_data.uid}")
-        self.status_changed.emit(self.grid_data.uid, "已暂停")
+
+        # 等待线程结束
+        if self._thread:
+            print(f"[GridTrader] 等待线程 {self._thread.name} 结束")
+            self._thread.join(timeout=2)
+            # 强制清理线程引用
+            self._thread = None
+
+        print("[GridTrader] 策略已停止")
         return True
 
-    @error_handler()
     def _run_strategy(self):
         """策略主循环"""
-        print(f"[GridTrader] === 策略线程启动 === {self.grid_data.pair} {self.grid_data.uid}")
+        thread_name = threading.current_thread().name
+        thread_id = threading.current_thread().ident
+        print(f"\n[GridTrader] === 策略线程启动 ===")
+        print(f"[GridTrader] 线程名称: {thread_name}")
+        print(f"[GridTrader] 线程ID: {thread_id}")
         print(f"[GridTrader] 策略初始状态:")
         print(f"  交易对: {self.grid_data.pair}")
         print(f"  方向: {self.grid_data.direction}")
@@ -151,8 +209,14 @@ class GridTrader(QObject):
                 last_process_time = current_time
                 
             except Exception as e:
-                print(f"[GridTrader] 策略执行错误: {e}")
+                print(f"[GridTrader] 策略线程 {thread_name} 执行错误: {e}")
+                print(f"[GridTrader] 错误详情: {traceback.format_exc()}")
                 break
+                
+        print(f"[GridTrader] === 策略线程退出 ===")
+        print(f"[GridTrader] 线程名称: {thread_name}")
+        print(f"[GridTrader] 线程ID: {thread_id}")
+        print(f"[GridTrader] 退出原因: {'停止标志被设置' if self._stop_flag.is_set() else '运行标志为False'}")
 
     def handle_error(self, error_msg: str):
         """处理错误并暂停策略"""
@@ -940,12 +1004,12 @@ class GridTrader(QObject):
             self.logger.info(f"  原因: {reason}")
             
             # 获取当前持仓信息
-            metrics = self.grid_data.calculate_position_metrics()
-            self.logger.debug(f"  当前持仓: {metrics}")
+            # metrics = self.grid_data.calculate_position_metrics()
+            # self.logger.debug(f"  当前持仓: {metrics}")
             
-            if metrics['total_value'] <= 0:
-                self.logger.info("  无持仓，无需平仓")
-                return True
+            # if metrics['total_value'] <= 0:
+            #     self.logger.info("  无持仓，无需平仓")
+            #     return True
 
             # 准备平仓参数
             symbol = self.grid_data.pair.replace('/', '')

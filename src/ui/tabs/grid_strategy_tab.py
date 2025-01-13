@@ -1222,18 +1222,10 @@ class GridStrategyTab(QWidget):
             self.show_error_message("请先停止策略再进行平仓操作！")
             return
 
-        # 获取持仓信息用于确认
-        metrics = grid_data.calculate_position_metrics()
-        if metrics['total_value'] <= 0:
-            self.show_message("提示", "当前无持仓，无需平仓")
-            return
-
         # 确认平仓操作
         confirm_msg = (f"确认平仓 {grid_data.pair} ?\n"
                     f"方向: {'多仓' if grid_data.is_long() else '空仓'}\n"
-                    f"当前层数: {grid_data.row_dict.get('当前层数')}\n"
-                    f"持仓均价: {metrics['avg_price']}\n"
-                    f"持仓价值: {metrics['total_value']}")
+                    f"当前层数: {grid_data.row_dict.get('当前层数')}\n")
         
         response = QMessageBox.question(
             self, 
@@ -1297,6 +1289,7 @@ class GridStrategyTab(QWidget):
 
                 # 从管理器中删除
                 self.strategy_manager.delete_strategy(uid)
+                self.update_thread_info_label()
                 print(f"[GridStrategyTab] 策略已删除: {uid}")
                 
                 self.save_data(show_message=False)

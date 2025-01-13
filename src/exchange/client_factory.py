@@ -161,17 +161,17 @@ class ExchangeClientFactory(QObject):
                 # 从字典中删除引用
                 if tab_id in self._clients:
                     del self._clients[tab_id]
-                    print(f"已删除客户端引用: {tab_id}")
+                    # print(f"已删除客户端引用: {tab_id}")
                     
                 # except Exception as e:
                 #     print(f"销毁客户端时出错: {str(e)}")
             
             if thread:
                 # try:
-                print(f"清理线程: {tab_id}")
+                # print(f"清理线程: {tab_id}")
                 if tab_id in self._client_threads:
                     del self._client_threads[tab_id]
-                    print(f"已删除线程引用: {tab_id}")
+                    # print(f"已删除线程引用: {tab_id}")
                 # except Exception as e:
                 #     print(f"清理线程时出错: {str(e)}")
             
