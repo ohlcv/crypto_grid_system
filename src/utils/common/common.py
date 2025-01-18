@@ -64,3 +64,13 @@ def resource_path(relative_path):
     except Exception as e:
         print(f"Error in resource_path: {str(e)}")
         return None
+    
+def create_file_if_not_exists(file_path: str):
+    """确保文件和文件夹存在，如果文件不存在，则创建空文件"""
+    dir_path = os.path.dirname(file_path)
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+    
+    if not os.path.isfile(file_path):
+        with open(file_path, 'w', encoding='utf-8') as f:
+            pass  # 创建空文件

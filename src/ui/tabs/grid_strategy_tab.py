@@ -23,6 +23,7 @@ from src.exchange.client_factory import ExchangeClientFactory
 from src.strategy.grid.grid_core import GridData, GridDirection
 from src.strategy.grid.grid_strategy_manager import GridStrategyManager
 from src.ui.dialogs.grid_settings_aidlog import GridDialog
+from src.utils.common.common import create_file_if_not_exists
 from src.utils.logger.log_helper import ui_logger
 
 
@@ -81,9 +82,9 @@ class GridStrategyTab(QWidget):
         self.tab_id = str(uuid.uuid4())  # 生成唯一的标签页ID
         self.exchange_client: Optional[BaseClient] = None
         self.config_path = os.path.join('./config/api_config', f'api_config.json')
-        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        create_file_if_not_exists(self.config_path)
         self.data_path = os.path.join('./data', 'grid_strategy', f'{inst_type.lower()}_strategies.json')
-        os.makedirs(os.path.dirname(self.data_path), exist_ok=True)
+        create_file_if_not_exists(self.data_path)
         # 创建自动保存定时器
         self.auto_save_timer = QTimer(self)
         self.auto_save_timer.timeout.connect(lambda: self.save_data(show_message=False))
@@ -1496,6 +1497,7 @@ class GridStrategyTab(QWidget):
                             data['running_strategies'].append(uid)
 
                 # 保存到JSON文件
+                create_file_if_not_exists(self.data_path)
                 with open(self.data_path, 'w', encoding='utf-8') as f:
                     json.dump(data, f, indent=4, ensure_ascii=False)
                 
@@ -1542,25 +1544,17 @@ class GridStrategyTab(QWidget):
                 if delayed:
                     print("[GridStrategyTab] 延迟加载模式，等待5秒...")
                     time.sleep(5)
-                
                 print("[GridStrategyTab] 开始加载数据...")
-                if not os.path.exists(self.data_path):
-                    error_msg = "未找到数据文件"
-                    print(f"[GridStrategyTab] {error_msg}")
-                    try:
-                        os.makedirs(self.data_path)  # 尝试创建目录
-                        print(f"[GridStrategyTab] 已创建目录: {self.data_path}")
-                    except Exception as e:
-                        error_msg = f"创建目录失败: {e}"
-                        print(f"[GridStrategyTab] {error_msg}")
-                        if not delayed:
-                            self.load_failed.emit(error_msg)
-                        return
-
+                create_file_if_not_exists(self.data_path)
                 # 读取数据文件
                 with open(self.data_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    
+                    content = f.read().strip()  # 读取内容并去除多余的空白
+                    if not content:  # 文件为空
+                        print(f"[GridStrategyTab] 文件为空，使用默认数据")
+                        data = {"inst_type": self.inst_type, "strategies": {}, "running_strategies": []}
+                    else:
+                        data = json.loads(content)  # 尝试加载 JSON 数据
+
                 if not isinstance(data, dict) or 'strategies' not in data:
                     raise ValueError("无效的数据格式")
 
