@@ -82,9 +82,7 @@ class GridStrategyTab(QWidget):
         self.tab_id = str(uuid.uuid4())  # 生成唯一的标签页ID
         self.exchange_client: Optional[BaseClient] = None
         self.config_path = os.path.join('./config/api_config', f'api_config.json')
-        create_file_if_not_exists(self.config_path)
         self.data_path = os.path.join('./data', 'grid_strategy', f'{inst_type.lower()}_strategies.json')
-        create_file_if_not_exists(self.data_path)
         # 创建自动保存定时器
         self.auto_save_timer = QTimer(self)
         self.auto_save_timer.timeout.connect(lambda: self.save_data(show_message=False))
@@ -360,33 +358,51 @@ class GridStrategyTab(QWidget):
             self.show_error_message("有策略正在运行，请先停止所有策略")
             return
 
-        if os.path.exists(self.config_path):
-            with open(self.config_path, 'r') as f:
-                config = json.load(f)
+        # 确保文件存在
+        create_file_if_not_exists(self.config_path)
 
-            # 保存配置到 self.config
-            self.config = config
-            print("[GridStrategyTab] 已加载配置:", {
-                'exchange': self.config['exchange'],
-                'user_id': self.config['user_id'],
-                'api_key': self.config['api_key'][-6:]
-            })
+        try:
+            if os.path.exists(self.config_path):
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()  # 读取并去除多余的空白
+                    if not content:  # 如果文件为空
+                        print("[GridStrategyTab] 配置文件为空，使用默认配置")
+                        config = {
+                            'exchange': 'bitget',
+                            'user_id': '',
+                            'api_key': '',
+                            'api_secret': '',
+                            'passphrase': ''
+                        }
+                    else:
+                        config = json.loads(content)  # 尝试加载配置
+        except json.JSONDecodeError:
+            # 如果文件内容无效，使用默认配置
+            print("[GridStrategyTab] 配置文件无效，使用默认配置")
+            config = {
+                'exchange': 'bitget',
+                'user_id': '',
+                'api_key': '',
+                'api_secret': '',
+                'passphrase': ''
+            }
 
-            # 填充UI
-            exchange = config.get('exchange', 'bitget')
-            self.exchange_combo.setCurrentText(exchange.capitalize())
-            self.user_id_input.setText(config.get('user_id', ''))
-            self.api_key_input.setText(config.get('api_key', ''))
-            self.secret_key_input.setText(config.get('api_secret', ''))
-            self.passphrase_input.setText(config.get('passphrase', ''))
+        # 保存配置到 self.config
+        self.config = config
 
-            if all([config.get('api_key'), config.get('api_secret'), config.get('passphrase')]):
-                exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
-                self._reset_and_create_client(config, exchange_type)
-            else:
-                print("[GridStrategyTab] API配置不完整，未创建客户端")
-        # else:
-        #     self.show_message("提示", "未找到API配置文件，请先进行配置。")
+        # 填充UI
+        exchange = config.get('exchange', 'bitget')
+        self.exchange_combo.setCurrentText(exchange.capitalize())
+        self.user_id_input.setText(config.get('user_id', ''))
+        self.api_key_input.setText(config.get('api_key', ''))
+        self.secret_key_input.setText(config.get('api_secret', ''))
+        self.passphrase_input.setText(config.get('passphrase', ''))
+
+        if all([config.get('api_key'), config.get('api_secret'), config.get('passphrase')]):
+            exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+            self._reset_and_create_client(config, exchange_type)
+        else:
+            print("[GridStrategyTab] API配置不完整，未创建客户端")
 
     def save_api_config(self, auto_save: bool = False):
         """保存API配置"""
