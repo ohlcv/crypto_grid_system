@@ -27,16 +27,6 @@ from src.utils.common.common import create_file_if_not_exists
 from src.utils.logger.log_helper import ui_logger
 
 
-def format_timestamp(timestamp: int) -> str:
-    """将时间戳转换为日期时间格式"""
-    try:
-        dt = datetime.fromtimestamp(timestamp / 1000)  # 毫秒转换为秒
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
-    except Exception as e:
-        # print(f"[format_timestamp] 时间戳转换错误: {e}")
-        # print(f"[format_timestamp] 输入时间戳: {timestamp}")
-        return "N/A"
-
 class GridStrategyTab(QWidget):
     """网格策略Tab页"""
     save_completed = Signal(str)  # 保存成功信号
@@ -54,18 +44,18 @@ class GridStrategyTab(QWidget):
         {"name": "操作", "type": "switches", "editable": True, "width": 100},
         {"name": "运行状态", "type": "text", "editable": False, "width": 100},
         {"name": "当前层数", "type": "text", "editable": False, "width": 100},
-        {"name": "最后价格", "type": "text", "editable": False, "width": 100},
-        {"name": "尾单价格", "type": "text", "editable": False, "width": 100},
         {"name": "最后时间", "type": "text", "editable": False, "width": 100},
         {"name": "时间戳", "type": "text", "editable": False, "width": 110},
+        {"name": "最后价格", "type": "text", "editable": False, "width": 100},
         {"name": "开仓触发价", "type": "text", "editable": False, "width": 110},
         {"name": "止盈触发价", "type": "text", "editable": False, "width": 110},
+        {"name": "尾单价格", "type": "text", "editable": False, "width": 100},
         {"name": "持仓均价", "type": "text", "editable": False, "width": 100},
         {"name": "持仓价值", "type": "text", "editable": False, "width": 100},
         {"name": "持仓盈亏", "type": "text", "editable": False, "width": 100},
         {"name": "实现盈亏", "type": "text", "editable": False, "width": 100},
-        {"name": "总体止盈", "type": "text", "editable": False, "width": 100},  # 修改
-        {"name": "总体止损", "type": "text", "editable": False, "width": 100},  # 修改
+        {"name": "总体止盈", "type": "text", "editable": False, "width": 100},
+        {"name": "总体止损", "type": "text", "editable": False, "width": 100},
         {"name": "交易所", "type": "text", "editable": False, "width": 100},
         {"name": "标识符", "type": "text", "editable": False, "width": 100}
     ]
@@ -141,20 +131,6 @@ class GridStrategyTab(QWidget):
             self._reset_api_inputs()
             self._disconnect_client()
 
-    def _handle_private_connected(self):
-        """处理私有WS连接成功后的验证"""
-        try:
-            print("[GridStrategyTab] === 私有WS连接成功，开始验证 ===")
-            # 连接成功后立即进行白名单和邀请人ID验证
-            self._verify_inviter_id()
-            
-        except Exception as e:
-            print(f"[GridStrategyTab] 连接后验证失败: {e}")
-            print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
-            error_msg = f"验证失败: {str(e)}\n程序即将退出"
-            QMessageBox.critical(self, "错误", error_msg)
-            sys.exit(1)
-
     def _connect_client_signals(self, client: BaseClient):
         """连接客户端信号"""
         try:
@@ -167,6 +143,7 @@ class GridStrategyTab(QWidget):
                 self._signals_connected = False
                 
             # 连接新信号
+            self._connect_factory_signals()
             client.tick_received.connect(self._handle_market_data)
             client.connection_status.connect(self.update_exchange_status)
             client.error_occurred.connect(self._handle_client_error)
@@ -249,69 +226,6 @@ class GridStrategyTab(QWidget):
             "private": private_status
         }
 
-    def _verify_inviter_id(self):
-        """验证邀请人ID"""
-        try:
-            print("\n[GridStrategyTab] === 开始验证邀请人ID ===")
-            response = self.exchange_client.rest_api.get_account_info()
-            print(f"[GridStrategyTab] API响应: {response}")
-                
-            # 检查API返回状态
-            if isinstance(response, dict) and response.get('code') == '00000':
-                # 获取用户信息
-                data = response.get('data', {})
-                user_id = data.get('userId')
-                inviter_id = data.get('inviterId')
-
-                # 更新用户ID输入框
-                if user_id:
-                    self.user_id_input.setText(str(user_id))
-                    # 自动保存配置
-                    self.save_api_config(auto_save=True)
-
-                print(f"\n[GridStrategyTab] === 用户信息检查 ===")
-                print(f"当前用户 UID: {user_id}")
-                print(f"邀请人 UID: {inviter_id}")
-                # print(f"白名单列表: {self.WHITELIST_UIDS}")
-                # print(f"允许邀请人列表: {self.ALLOWED_INVITER_IDS}")
-                print(f"是否白名单用户: {'是' if user_id in self.WHITELIST_UIDS else '否'}")
-                print(f"是否被邀请用户: {'是' if inviter_id in self.ALLOWED_INVITER_IDS else '否'}")
-
-                # 先检查是否在白名单中
-                if user_id in self.WHITELIST_UIDS:
-                    print(f"[GridStrategyTab] ✅ UID {user_id} 在白名单中，验证通过")
-                    return
-
-                # 不在白名单中则检查邀请人ID
-                if inviter_id in self.ALLOWED_INVITER_IDS:
-                    print(f"[GridStrategyTab] ✅ 邀请人 {inviter_id} 验证通过")
-                    return
-                else:
-                    error_msg = "您不是邀请用户！\n请使用指定邀请链接注册后使用。"
-                    print(f"[GridStrategyTab] ❌ 验证失败: 非指定邀请码用户")
-                    print(f"[GridStrategyTab] 当前邀请人: {inviter_id}")
-                    print(f"[GridStrategyTab] 允许邀请人: {self.ALLOWED_INVITER_IDS}")
-                    QMessageBox.critical(self, "错误", error_msg)
-                    self._reset_api_inputs()
-                    self._disconnect_client()
-                    return
-            else:
-                # API验证失败
-                error_msg = f"验证失败: {response.get('msg', '未知错误')}"
-                print(f"[GridStrategyTab] ❌ API验证失败: {error_msg}")
-                QMessageBox.critical(self, "错误", error_msg)
-                self._reset_api_inputs()
-                self._disconnect_client()
-                return
-
-        except Exception as e:
-            print(f"[GridStrategyTab] ❌ 验证过程出错: {e}")
-            print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
-            error_msg = f"验证失败: {str(e)}"
-            QMessageBox.critical(self, "错误", error_msg)
-            self._reset_api_inputs()
-            self._disconnect_client()
-
     def _reset_api_inputs(self):
         """清空所有API输入框"""
         self.api_key_input.clear()
@@ -347,7 +261,7 @@ class GridStrategyTab(QWidget):
                 print("[GridStrategyTab] 客户端实例匹配，重新连接信号")
                 self._connect_client_signals(client)
                 self.update_exchange_status(client.is_connected)
-                self.test_connection()
+                # self.test_connection()
 
         except Exception as e:
             print(f"[GridStrategyTab] 客户端创建处理错误: {e}")
@@ -499,13 +413,27 @@ class GridStrategyTab(QWidget):
             self._reset_and_create_client(self.config, exchange_type)
             self.update_exchange_status(False)
 
-    def _handle_market_data(self, symbol: str, data: dict):
-        # print(f"\n[GridStrategyTab] === 收到行情数据 ===")
-        # print(f"[GridStrategyTab] 交易对: {symbol}")
-        # print(f"[GridStrategyTab] 数据: {data}")
-        # 直接将数据转发给策略管理器，让它来处理匹配逻辑
-        self.strategy_manager.process_market_data(symbol, data)
-                    
+    def _handle_market_data(self, symbol: str, market_data: dict):
+        """处理市场数据"""
+        # 检查是否有运行中的策略在使用这个交易对
+        normalized_pair = symbol.replace('/', '')
+        has_running_strategy = False
+        
+        for uid, grid in self.strategy_manager._data.items():
+            if (grid.pair.replace('/', '') == normalized_pair and 
+                grid.row_dict.get("运行状态") == "运行中"):
+                has_running_strategy = True
+                break
+        
+        if not has_running_strategy:
+            # 如果没有运行中的策略，取消订阅
+            print(f"[GridStrategyManager] 没有运行中的策略使用交易对 {symbol}，取消订阅")
+            self.exchange_client.unsubscribe_pair(symbol, ["ticker"], grid.uid)
+            return
+                
+        # 有运行中的策略，继续处理行情数据
+        self.strategy_manager.process_market_data(symbol, market_data)
+
     def setup_ui(self):
         """设置UI界面"""
         layout = QVBoxLayout()
@@ -1119,25 +1047,34 @@ class GridStrategyTab(QWidget):
         if not self.check_client_status():
             self.show_error_message("客户端未连接，请检查网络或配置！")
             return
+            
         grid_data = self.strategy_manager.get_strategy_data(uid)
         if not grid_data or not grid_data.grid_levels:
             self.show_error_message("请先设置网格参数！")
             return
+            
         try:
             # 订阅交易数据
             success = self.exchange_client.subscribe_pair(grid_data.pair, ["ticker"], uid)
             if not success:
                 raise ValueError("订阅交易数据失败")
+                
             # 启动策略
             success = self.strategy_manager.start_strategy(uid, self.exchange_client)
             if not success:
                 # 如果启动失败，取消订阅
                 self.exchange_client.unsubscribe_pair(grid_data.pair, ["ticker"], uid)
                 raise ValueError("启动策略失败")
+                
+            # 更新运行状态，但保留实现盈亏值
+            grid_data.row_dict["运行状态"] = "运行中"
+            grid_data.data_updated.emit(uid)
+                
             # 异步保存数据
             self.save_data(show_message=False)
             self.show_message("启动策略", f"策略 {grid_data.pair} 已成功启动！")
             self.update_thread_info_label()
+            
         except Exception as e:
             self.show_error_message(f"启动策略失败: {str(e)}")
             # 确保取消订阅
@@ -1517,7 +1454,7 @@ class GridStrategyTab(QWidget):
                 with open(self.data_path, 'w', encoding='utf-8') as f:
                     json.dump(data, f, indent=4, ensure_ascii=False)
                 
-                print("[GridStrategyTab] 数据保存成功")
+                # print("[GridStrategyTab] 数据保存成功")
                 if show_message:
                     self.save_completed.emit("数据已成功保存！")
 
@@ -1599,6 +1536,12 @@ class GridStrategyTab(QWidget):
                         if grid_data:
                             # 设置方向
                             grid_data.direction = GridDirection(strategy_data["direction"])
+                            
+                            # 首先恢复实现盈亏值
+                            original_profit = Decimal(str(strategy_data.get('total_realized_profit', '0')))
+                            grid_data.total_realized_profit = original_profit
+                            print(f"[GridStrategyTab] 恢复策略 {uid} 实现盈亏: {original_profit}")
+                            
                             # 恢复网格配置
                             for level_str, config in strategy_data.get("grid_levels", {}).items():
                                 level = int(level_str)
@@ -1619,8 +1562,12 @@ class GridStrategyTab(QWidget):
                                     }
                                     config_data.update(filled_data)
                                 grid_data.update_level(level, config_data)
+                                
                             # 恢复UI显示数据
                             grid_data.row_dict.update(strategy_data["row_dict"])
+                            # 确保实现盈亏正确显示
+                            grid_data.row_dict["实现盈亏"] = str(original_profit)
+                            
                             # 检查并设置正确的运行状态
                             grid_status = grid_data.get_grid_status()
                             filled_levels = sum(1 for config in grid_data.grid_levels.values() 
@@ -1636,33 +1583,43 @@ class GridStrategyTab(QWidget):
                                 else:
                                     initial_status = "已平仓"  # 无持仓
                             grid_data.row_dict["运行状态"] = initial_status
+                            
                             # 在主线程中添加到表格
                             self.add_row_signal.emit(uid)
                             grid_data.data_updated.connect(self._update_table_row)
                             print(f"[GridStrategyTab] 策略 {uid} 加载完成，状态: {initial_status}")
+                            print(f"[GridStrategyTab] 当前实现盈亏: {grid_data.total_realized_profit}")
+                            
                         loaded_count += 1
                     except Exception as e:
                         print(f"[GridStrategyTab] 加载策略 {uid} 失败: {e}")
                         print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
                         continue
+                        
                 print("[GridStrategyTab] 数据加载完成")
                 if not delayed:
                     if loaded_count > 0:
                         self.load_completed.emit(f"成功加载 {loaded_count} 个策略！")
+                        
             except Exception as e:
                 error_msg = f"加载数据失败: {str(e)}"
                 print(f"[GridStrategyTab] {error_msg}")
                 print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
-                # if not delayed:
-                #     self.load_failed.emit(error_msg)
+                
             finally:
                 self._load_thread = None
+                
         # 如果已有加载线程在运行，等待其完成
         if self._load_thread and self._load_thread.is_alive():
             print("[GridStrategyTab] 已有加载操作在进行中...")
             return
+            
         # 创建新的加载线程
-        self._load_thread = threading.Thread(name=f"GridStrategy-Load-{self.tab_id}", target=_load, daemon=True)
+        self._load_thread = threading.Thread(
+            name=f"GridStrategy-Load-{self.tab_id}",
+            target=_load,
+            daemon=True
+        )
         self._load_thread.start()
 
     def refresh_strategy_data(self, uid: str):

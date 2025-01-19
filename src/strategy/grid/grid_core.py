@@ -266,7 +266,7 @@ class GridData(QObject):
                 "交易对": self.pair,
                 "方向": self.direction.value,
                 "操作": {"开仓": True, "平仓": True},
-                "运行状态": "已添加",
+                "运行状态": "已重置",
                 "当前层数": "0/0",  # 修改为更明确的显示
                 "持仓价值": "0",   # 使用具体值替代None
                 "持仓盈亏": "0",
@@ -581,16 +581,18 @@ class GridData(QObject):
         self.data_updated.emit(self.uid)
         
         # 检查是否达到总体止盈条件
-        if self.check_take_profit_condition():
+        position_metrics = self.calculate_position_metrics()
+        unrealized_pnl = position_metrics['unrealized_pnl']
+        if self.check_take_profit_condition(unrealized_pnl):
             self.logger.info(f"[GridData] 达到总体止盈条件：{self.total_realized_profit} >= {self.take_profit_config.profit_amount}")
             return True
         return False
 
-    def check_take_profit_condition(self) -> bool:
+    def check_take_profit_condition(self, unrealized_pnl: Decimal) -> bool:
         """检查是否达到总体止盈条件（使用累计已实现盈利）"""
         if not self.take_profit_config.enabled or self.take_profit_config.profit_amount is None:
             return False
-        return self.total_realized_profit >= self.take_profit_config.profit_amount
+        return self.total_realized_profit - unrealized_pnl >= self.take_profit_config.profit_amount
         
     def check_stop_loss_condition(self, unrealized_pnl: Decimal) -> bool:
         """检查是否达到总体止损条件（使用总浮动亏损）"""
@@ -708,16 +710,15 @@ class GridData(QObject):
 
     def to_dict(self) -> dict:
         """转换为字典格式"""
-        # print(f"[GridData] === 序列化数据 === {self.uid}")
         data = {
             "uid": self.uid,
             "pair": self.pair,
             "exchange": self.exchange,
             "inst_type": self.inst_type,
             "direction": self.direction.value,
-            'take_profit_config': self.take_profit_config.to_dict(),
-            'stop_loss_config': self.stop_loss_config.to_dict(),
-            'total_realized_profit': float(self.total_realized_profit),  # 添加已实现盈利
+            "take_profit_config": self.take_profit_config.to_dict(),
+            "stop_loss_config": self.stop_loss_config.to_dict(),
+            "total_realized_profit": float(self.total_realized_profit),  # 确保包含实现盈亏
             "grid_levels": {
                 level: {
                     "间隔%": float(config.interval_percent),
@@ -735,13 +736,12 @@ class GridData(QObject):
             },
             "row_dict": self.row_dict
         }
-        # print(f"[GridData] 序列化完成: {len(data['grid_levels'])} 层配置")
         return data
 
     @classmethod
     def from_dict(cls, data: dict) -> 'GridData':
         """从字典创建实例"""
-        # print(f"[GridData] === 反序列化数据 === {data['uid']}")
+        print(f"[GridData] === 反序列化数据 === {data['uid']}")
         instance = cls(data["uid"], data["pair"], data["exchange"], data["inst_type"])
         instance.direction = GridDirection(data["direction"])
         
@@ -765,6 +765,12 @@ class GridData(QObject):
         instance.row_dict = data["row_dict"]
         instance.take_profit_config = TakeProfitConfig.from_dict(data.get('take_profit_config', {}))
         instance.stop_loss_config = StopLossConfig.from_dict(data.get('stop_loss_config', {}))
+        
+        # 恢复实现盈亏
         instance.total_realized_profit = Decimal(str(data.get('total_realized_profit', '0')))
-        # print(f"[GridData] 反序列化完成: {len(instance.grid_levels)} 层配置")
+        instance.row_dict["实现盈亏"] = str(instance.total_realized_profit)
+        
+        print(f"[GridData] 反序列化完成: {len(instance.grid_levels)} 层配置")
+        print(f"[GridData] 恢复实现盈亏: {instance.total_realized_profit}")
+        
         return instance

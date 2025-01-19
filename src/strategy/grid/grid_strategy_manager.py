@@ -170,17 +170,25 @@ class GridStrategyManager(QObject):
             print(f"  - {t.name} (ID: {t.ident}, 活跃: {t.is_alive()})")
         
         try:
-            trader = self._strategies.get(uid)
-            if not trader:
-                print(f"[GridStrategyManager] 未找到策略实例: {uid}")
+            # 获取grid_data
+            grid_data = self._data.get(uid)
+            if not grid_data:
+                print(f"[GridStrategyManager] 未找到策略数据: {uid}")
                 return False
                 
-            if trader._running:
+            # 获取或创建trader
+            trader = self._strategies.get(uid)
+            if trader and trader._running:
                 print(f"[GridStrategyManager] 策略已在运行中")
                 if trader._thread:
                     print(f"  线程名称: {trader._thread.name}")
                     print(f"  线程ID: {trader._thread.ident}")
                 return False
+
+            # 如果不存在trader或trader已停止，创建新的trader
+            if not trader:
+                trader = GridTrader(grid_data)
+                self._strategies[uid] = trader
 
             # 获取并缓存交易对参数
             if not self._cache_trading_params(trader.grid_data, exchange_client):
@@ -192,9 +200,18 @@ class GridStrategyManager(QObject):
             print(f"[GridStrategyManager] 设置交易所客户端...")
             trader.set_client(exchange_client)
             
+            # 确保实现盈亏值正确设置
+            original_profit = grid_data.total_realized_profit
+            print(f"[GridStrategyManager] 保持原有实现盈亏: {original_profit}")
+            
             # 启动策略
             if trader.start():
                 self.strategy_started.emit(uid)
+                # 确保运行状态更新但不影响实现盈亏
+                grid_data.total_realized_profit = original_profit
+                grid_data.row_dict["实现盈亏"] = str(original_profit)
+                grid_data.row_dict["运行状态"] = "运行中"
+                grid_data.data_updated.emit(uid)
                 
                 # 打印更新后的线程状态
                 print("\n[GridStrategyManager] 策略启动后线程状态:")
