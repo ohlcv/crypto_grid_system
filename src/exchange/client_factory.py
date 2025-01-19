@@ -30,10 +30,10 @@ class ExchangeValidator(Protocol):
 
 class BitgetValidator:
     """Bitget验证器"""
-    WHITELIST_UIDS = ["5197445181", "5176387297", "3295149482"]  
-    ALLOWED_INVITER_IDS = ["5197445181", "5176387297"]
-    # WHITELIST_UIDS = []  
-    # ALLOWED_INVITER_IDS = []
+    # WHITELIST_UIDS = ["5197445181", "5176387297", "3295149482"]  
+    # ALLOWED_INVITER_IDS = ["5197445181", "5176387297"]
+    WHITELIST_UIDS = []  
+    ALLOWED_INVITER_IDS = []
 
     def validate_account(self, client: BaseClient) -> bool:
         try:
@@ -137,8 +137,10 @@ class ExchangeClientFactory(QObject):
             return None
             
     def _run_client(self, client: BaseClient, tab_id: str):
-        """在独立线程中运行客户端"""
         try:
+            # 添加状态跟踪防止重复验证
+            self._validation_attempted = False
+            
             # 更新状态为连接中
             self._update_status(tab_id, ClientStatus.CONNECTING)
             
@@ -146,29 +148,37 @@ class ExchangeClientFactory(QObject):
             client.connect()
             
             # 等待连接完成
-            max_wait = 10  # 最大等待秒数
+            max_wait = 10  
             start = time.time()
             while not client.is_connected:
                 time.sleep(0.1)
                 if time.time() - start > max_wait:
                     raise TimeoutError("连接超时")
             
-            # 验证账户
-            self._update_status(tab_id, ClientStatus.VALIDATING)
-            validator = self._validator_registry.get_validator(client.exchange)
-            if validator:
-                if not validator.validate_account(client):
-                    raise ValueError("账户验证失败，请使用邀请链接注册后再使用！")
-                    
+            # 只验证一次
+            if not self._validation_attempted:
+                self._validation_attempted = True
+                self._update_status(tab_id, ClientStatus.VALIDATING)
+                validator = self._validator_registry.get_validator(client.exchange)
+                if validator:
+                    if not validator.validate_account(client):
+                        self._update_status(tab_id, ClientStatus.FAILED) 
+                        # 只发送一次验证失败消息
+                        self.validation_failed.emit("账户验证失败，请使用邀请链接注册后再使用！")
+                        return
+                        
             # 验证成功,更新状态为就绪        
             self._update_status(tab_id, ClientStatus.READY)
             self.client_created.emit(client)
             
         except Exception as e:
-            self._update_status(tab_id, ClientStatus.FAILED)
-            self.client_error.emit(str(e))
-            self.destroy_client(tab_id)
-
+            if not self._validation_attempted:  # 确保错误消息也只发送一次
+                self._update_status(tab_id, ClientStatus.FAILED)
+                self.client_error.emit(str(e))
+        finally:
+            if self._client_status.get(tab_id) == ClientStatus.FAILED:
+                self.destroy_client(tab_id)
+            
     def _update_status(self, tab_id: str, status: ClientStatus):
         """更新客户端状态"""
         with self._lock:

@@ -143,7 +143,6 @@ class GridStrategyTab(QWidget):
                 self._signals_connected = False
                 
             # 连接新信号
-            self._connect_factory_signals()
             client.tick_received.connect(self._handle_market_data)
             client.connection_status.connect(self.update_exchange_status)
             client.error_occurred.connect(self._handle_client_error)
@@ -248,10 +247,12 @@ class GridStrategyTab(QWidget):
             threading.Thread(target=destroy_client, daemon=True).start()
 
     def _handle_validation_failed(self, error_msg: str):
-        """处理验证失败"""
-        self.show_error_message(error_msg)
-        self._reset_api_inputs()
-        self._disconnect_client()
+        """处理验证失败，确保只显示一次错误消息"""
+        if not hasattr(self, '_validation_error_shown'):
+            self._validation_error_shown = True
+            self.show_error_message(error_msg)
+            self._reset_api_inputs()
+            self._disconnect_client()
 
     def _handle_client_created(self, client: BaseClient):
         """处理客户端创建"""
