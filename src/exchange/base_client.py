@@ -79,6 +79,7 @@ class BaseClient(QObject):
         self.inst_type = inst_type
         self._connected = False
         self._subscribed_symbols = set()
+        self.exchange = None
 
     def connect(self) -> bool:
         """建立连接"""

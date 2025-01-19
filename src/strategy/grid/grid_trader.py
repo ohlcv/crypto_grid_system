@@ -169,7 +169,11 @@ class GridTrader(QObject):
         # 等待线程结束
         if self._thread:
             print(f"[GridTrader] 等待线程 {self._thread.name} 结束")
-            self._thread.join(timeout=2)
+            if self._thread.is_alive():
+                self._thread.join(timeout=2)  # 只在线程活跃时调用 join
+            else:
+                print(f"[GridTrader] 线程 {self._thread.name} 已经结束，跳过 join 调用")
+            
             # 强制清理线程引用
             self._thread = None
 

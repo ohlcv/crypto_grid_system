@@ -18,7 +18,7 @@ class BitgetSpotAPI:
         self.logger = api_logger
 
     def get_account_info(self):
-        self.logger.info("获取现货账户信息")
+        self.logger.info("获取账户信息")
         try:
             response = self.order_api._request_with_params(GET, '/api/v2/spot/account/info', {})
             self.logger.debug(f"账户信息响应: {response}")
@@ -134,7 +134,7 @@ class BitgetMixAPI:
 
     @error_handler()
     def get_account_info(self):
-        self.logger.info("获取现货账户信息")
+        self.logger.info("获取账户信息")
         try:
             response = self.order_api._request_with_params(GET, '/api/v2/spot/account/info', {})
             self.logger.debug(f"账户信息响应: {response}")

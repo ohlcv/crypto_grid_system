@@ -69,8 +69,6 @@ class GridStrategyTab(QWidget):
         {"name": "交易所", "type": "text", "editable": False, "width": 100},
         {"name": "标识符", "type": "text", "editable": False, "width": 100}
     ]
-    ALLOWED_INVITER_IDS = ["5197445181", "5176387297"]  # 允许的邀请人ID列表
-    WHITELIST_UIDS = ["5197445181", "5176387297", "3295149482"]  # 白名单UID
 
     def __init__(self, inst_type: str, client_factory: ExchangeClientFactory):
         super().__init__()
@@ -112,6 +110,8 @@ class GridStrategyTab(QWidget):
         # 客户端工厂信号
         self.client_factory.client_created.connect(self._handle_client_created)
         self.client_factory.client_error.connect(self._handle_client_error)
+        self.client_factory.validation_failed.connect(self._handle_validation_failed)
+        self.client_factory.client_status_changed.connect(self._handle_client_status)
 
         # 策略管理器信号
         self.strategy_manager.strategy_started.connect(self._handle_strategy_started)
@@ -119,6 +119,27 @@ class GridStrategyTab(QWidget):
         self.strategy_manager.strategy_error.connect(self._handle_strategy_error)
         self.strategy_manager.strategy_status_changed.connect(self._handle_strategy_status_changed)
         # print("[GridStrategyTab] 工厂和策略管理器信号已连接")
+
+    def _handle_client_status(self, tab_id: str, status: str):
+        """处理客户端状态变化"""
+        if tab_id != self.tab_id:
+            return
+            
+        # 更新状态显示
+        self.connection_status_label.setText(f"连接状态：{status}")
+        
+        # 根据状态设置样式
+        if status in ["就绪"]:
+            self.connection_status_label.setStyleSheet("color: green")
+        elif status in ["连接中", "验证中"]:
+            self.connection_status_label.setStyleSheet("color: orange") 
+        else:
+            self.connection_status_label.setStyleSheet("color: red")
+
+        # 处理失败状态
+        if status == "失败":
+            self._reset_api_inputs()
+            self._disconnect_client()
 
     def _handle_private_connected(self):
         """处理私有WS连接成功后的验证"""
@@ -136,35 +157,51 @@ class GridStrategyTab(QWidget):
 
     def _connect_client_signals(self, client: BaseClient):
         """连接客户端信号"""
-        print(f"[GridStrategyTab] 开始连接客户端信号 - {client}")
-        
-        # 确保信号只连接一次
         try:
             # 先检查信号是否已连接
             if hasattr(self, '_signals_connected') and self._signals_connected:
-                print("[GridStrategyTab] 断开旧信号")
                 client.tick_received.disconnect(self._handle_market_data)
                 client.connection_status.disconnect(self.update_exchange_status)
                 client.error_occurred.disconnect(self._handle_client_error)
-                client.private_ws_connected.disconnect(self._handle_private_connected)  # 新增这一行
+                # 移除私有WS连接信号，因为验证已经由工厂处理
                 self._signals_connected = False
-        except (TypeError, RuntimeError) as e:
-            print(f"[GridStrategyTab] 断开信号时出错（可以忽略）: {e}")
-        
-        # 连接新信号
-        try:
-            print("[GridStrategyTab] 连接新信号...")
+                
+            # 连接新信号
             client.tick_received.connect(self._handle_market_data)
             client.connection_status.connect(self.update_exchange_status)
             client.error_occurred.connect(self._handle_client_error)
-            client.private_ws_connected.connect(self._handle_private_connected)  # 新增这一行
             self._signals_connected = True
-            print("[GridStrategyTab] 信号连接完成")
             
         except Exception as e:
             print(f"[GridStrategyTab] 连接信号失败: {e}")
             print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
+
+    def test_connection(self):
+        """测试API连接"""
+        if not self.exchange_client:
+            self.show_error_message("客户端未初始化，请先保存API配置。")
             return
+            
+        try:
+            # 检查连接状态
+            ws_status = self.exchange_client.get_ws_status()
+            if not ws_status['public'] or not ws_status['private']:
+                error_msg = "WebSocket连接失败: " + (
+                    "公共WS未连接" if not ws_status['public'] else ""
+                ) + (
+                    " 私有WS未连接" if not ws_status['private'] else ""
+                )
+                raise ConnectionError(error_msg)
+
+            self.show_message("连接测试", "API连接测试成功!")
+
+        except Exception as e:
+            error_msg = f"连接测试失败: {str(e)}"
+            print(f"[GridStrategyTab] {error_msg}")
+            print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
+            self.show_error_message(error_msg)
+            self._reset_api_inputs()
+            self._disconnect_client()
 
     def _update_ws_status(self, public_connected: bool, private_connected: bool):
         """更新WebSocket状态显示"""
@@ -176,10 +213,6 @@ class GridStrategyTab(QWidget):
         all_connected = public_connected and private_connected
         self.connection_status_label.setText(f"连接状态：{all_connected}")
         self.connection_status_label.setStyleSheet(f"color: {'green' if all_connected else 'red'};")
-        
-        # 如果私有WS连接成功，立即进行验证
-        if private_connected:
-            self._verify_inviter_id()
 
     def update_exchange_status(self, is_connected: bool = None):
         """更新交易所连接状态显示"""
@@ -300,41 +333,11 @@ class GridStrategyTab(QWidget):
                 
             threading.Thread(target=destroy_client, daemon=True).start()
 
-    def test_connection(self):
-        """测试API连接"""
-        if not self.exchange_client:
-            self.show_error_message("客户端未初始化，请先保存API配置。")
-            return
-        print("[GridStrategyTab] 开始测试API连接")
-        try:
-            # 1. 检查WebSocket连接状态
-            result = self.exchange_client.test_connection()
-            ws_status = result['ws_status']
-            
-            if not ws_status['public'] or not ws_status['private']:
-                details = []
-                if not ws_status['public']:
-                    details.append("公共WebSocket未连接")
-                if not ws_status['private']:
-                    details.append("私有WebSocket未连接")
-                    
-                error_msg = f"WebSocket连接失败: {', '.join(details)}"
-                self.show_error_message(error_msg)
-                self._reset_api_inputs()
-                self._disconnect_client()
-                return
-
-            # 2. 如果WebSocket连接成功，进行验证
-            self._verify_inviter_id()
-            
-            # 3. 如果验证通过，显示成功消息
-            self.show_message("连接测试", "API连接测试成功!\n您的账户已通过验证，可以开始使用。")
-
-        except Exception as e:
-            error_msg = f"连接测试失败: {str(e)}"
-            print(f"[GridStrategyTab] {error_msg}")
-            print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
-            self.show_error_message(error_msg)
+    def _handle_validation_failed(self, error_msg: str):
+        """处理验证失败"""
+        self.show_error_message(error_msg)
+        self._reset_api_inputs()
+        self._disconnect_client()
 
     def _handle_client_created(self, client: BaseClient):
         """处理客户端创建"""
@@ -345,7 +348,6 @@ class GridStrategyTab(QWidget):
                 self._connect_client_signals(client)
                 self.update_exchange_status(client.is_connected)
                 self.test_connection()
-                self._resubscribe_all_pairs()
 
         except Exception as e:
             print(f"[GridStrategyTab] 客户端创建处理错误: {e}")
@@ -355,7 +357,7 @@ class GridStrategyTab(QWidget):
     def load_api_config(self):
         """加载API配置"""
         if self.strategy_manager.has_running_strategies():
-            self.show_error_message("有策略正在运行，请先停止所有策略")
+            self.show_error_message("请先删除所有策略")
             return
 
         # 确保文件存在
@@ -407,7 +409,7 @@ class GridStrategyTab(QWidget):
     def save_api_config(self, auto_save: bool = False):
         """保存API配置"""
         if not auto_save and self.strategy_manager.has_running_strategies():
-            self.show_error_message("有策略正在运行，请先停止所有策略")
+            self.show_error_message("请先删除所有策略")
             return
 
         # 获取输入值
@@ -862,12 +864,7 @@ class GridStrategyTab(QWidget):
             return
             
         try:
-            # 检查交易对是否有效
-            if not self.exchange_client.check_pair_valid(pair):
-                self.show_error_message(f"交易对 {pair} 不存在，请检查输入！")
-                return
-                
-            # 获取交易对信息
+            # 1. 验证交易对是否存在
             symbol_normalized = pair.replace('/', '')
             is_spot = self.inst_type == "SPOT"
             pair_info = self.exchange_client.rest_api.get_pairs(symbol=symbol_normalized)
@@ -875,32 +872,49 @@ class GridStrategyTab(QWidget):
             if pair_info.get('code') != '00000':
                 raise ValueError(f"获取交易对信息失败: {pair_info.get('msg')}")
                 
-            # 创建策略
+            # 验证交易对是否在返回结果中
+            pair_exists = False
+            pair_data = None
+            for p in pair_info.get('data', []):
+                if p['symbol'] == symbol_normalized:
+                    pair_exists = True
+                    pair_data = p
+                    break
+
+            if not pair_exists:
+                raise ValueError(f"交易对 {pair} 不存在")
+
+            # 2. 缓存交易对参数
+            if pair_data: 
+                # 提取参数
+                if is_spot:
+                    quantity_precision = int(pair_data.get('quantityPrecision', 4))
+                    price_precision = int(pair_data.get('pricePrecision', 2))
+                    min_trade_amount = Decimal(str(pair_data.get('minTradeAmount', '0')))
+                    min_trade_value = Decimal(str(pair_data.get('minTradeUSDT', '5')))
+                else:
+                    quantity_precision = int(pair_data.get('volumePlace', 4))
+                    price_precision = int(pair_data.get('pricePlace', 2))
+                    min_trade_amount = Decimal(str(pair_data.get('minTradeNum', '0')))
+                    min_trade_value = Decimal(str(pair_data.get('minTradeUSDT', '5')))
+
+            # 3. 创建策略
             uid = str(uuid.uuid4())[:8]
             grid_data = self.create_strategy(uid, pair, exchange, self.inst_type)
             if not grid_data:
                 raise ValueError("创建策略失败")
+
+            # 4. 设置参数
+            grid_data.quantity_precision = quantity_precision  
+            grid_data.price_precision = price_precision
+            grid_data.min_trade_amount = min_trade_amount
+            grid_data.min_trade_value = min_trade_value
                 
-            # 缓存交易参数
-            pair_data = pair_info['data'][0]
-            if is_spot:
-                # 现货参数
-                grid_data.quantity_precision = int(pair_data.get('quantityPrecision', 4))
-                grid_data.price_precision = int(pair_data.get('pricePrecision', 2))
-                grid_data.min_trade_amount = Decimal(str(pair_data.get('minTradeAmount', '0')))
-                grid_data.min_trade_value = Decimal(str(pair_data.get('minTradeUSDT', '5')))
-            else:
-                # 合约参数
-                grid_data.quantity_precision = int(pair_data.get('volumePlace', 4))
-                grid_data.price_precision = int(pair_data.get('pricePlace', 2))
-                grid_data.min_trade_amount = Decimal(str(pair_data.get('minTradeNum', '0')))
-                grid_data.min_trade_value = Decimal(str(pair_data.get('minTradeUSDT', '5')))
-                
-            # 设置方向
+            # 5. 设置方向
             is_long = not self.position_mode_button.isChecked()
             grid_data.set_direction(is_long)
             
-            # 添加到表格
+            # 6. 添加到表格
             self.add_strategy_to_table(uid)
             # 清空输入
             self.input_symbol.clear()
@@ -1405,20 +1419,6 @@ class GridStrategyTab(QWidget):
             self.show_error_message(error_msg)
             # 确保策略已停止
             self.strategy_manager.stop_strategy(uid)
-
-    def _resubscribe_all_pairs(self):
-        """重新订阅所有交易对"""
-        if not self.exchange_client or not self.exchange_client.is_connected:
-            print("[GridStrategyTab] Client not connected, cannot resubscribe")
-            return
-
-        subscribed_pairs = set()
-        for uid in list(self.strategy_manager._data.keys()):
-            grid_data = self.strategy_manager.get_strategy_data(uid)
-            if grid_data and grid_data.pair not in subscribed_pairs:
-                self.exchange_client.subscribe_pair(grid_data.pair, ["ticker"])
-                subscribed_pairs.add(grid_data.pair)
-                print(f"[GridStrategyTab] Resubscribed to {grid_data.pair}")
 
     def pair_to_instId(self, pair: str) -> str:
         """转换交易对格式"""

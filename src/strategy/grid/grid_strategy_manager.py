@@ -181,6 +181,12 @@ class GridStrategyManager(QObject):
                     print(f"  线程名称: {trader._thread.name}")
                     print(f"  线程ID: {trader._thread.ident}")
                 return False
+
+            # 获取并缓存交易对参数
+            if not self._cache_trading_params(trader.grid_data, exchange_client):
+                error_msg = "获取交易对参数失败"
+                self.strategy_error.emit(uid, error_msg)
+                return False
                 
             # 设置exchange_client
             print(f"[GridStrategyManager] 设置交易所客户端...")
@@ -202,6 +208,64 @@ class GridStrategyManager(QObject):
             print(f"[GridStrategyManager] 启动策略失败: {e}")
             print(f"[GridStrategyManager] 错误详情: {traceback.format_exc()}")
             self.strategy_error.emit(uid, str(e))
+            return False
+
+    def _cache_trading_params(self, grid_data: GridData, exchange_client: BaseClient) -> bool:
+        """获取并缓存交易对参数
+        
+        Args:
+            grid_data: 网格策略数据
+            exchange_client: 交易所客户端
+            
+        Returns:
+            bool: 是否成功获取并缓存参数
+        """
+        try:
+            print(f"\n[GridStrategyManager] === 获取交易对参数 ===")
+            print(f"交易对: {grid_data.pair}")
+            
+            # 获取交易对信息
+            symbol_normalized = grid_data.pair.replace('/', '')
+            is_spot = grid_data.inst_type == "SPOT"
+            pair_info = exchange_client.rest_api.get_pairs(symbol=symbol_normalized)
+            
+            if pair_info.get('code') != '00000':
+                error_msg = f"获取交易对信息失败: {pair_info.get('msg')}"
+                print(f"[GridStrategyManager] {error_msg}")
+                return False
+                
+            # 缓存交易参数
+            pair_data = pair_info['data'][0]
+            print(f"[GridStrategyManager] 原始数据: {pair_data}")
+            
+            if is_spot:
+                # 现货参数
+                grid_data.quantity_precision = int(pair_data.get('quantityPrecision', 4))
+                grid_data.price_precision = int(pair_data.get('pricePrecision', 2))
+                grid_data.min_trade_amount = Decimal(str(pair_data.get('minTradeAmount', '0')))
+                grid_data.min_trade_value = Decimal(str(pair_data.get('minTradeUSDT', '5')))
+                print(f"[GridStrategyManager] 现货参数已缓存:")
+                print(f"  数量精度: {grid_data.quantity_precision}")
+                print(f"  价格精度: {grid_data.price_precision}")
+                print(f"  最小数量: {grid_data.min_trade_amount}")
+                print(f"  最小金额: {grid_data.min_trade_value}")
+            else:
+                # 合约参数
+                grid_data.quantity_precision = int(pair_data.get('volumePlace', 4))
+                grid_data.price_precision = int(pair_data.get('pricePlace', 2))
+                grid_data.min_trade_amount = Decimal(str(pair_data.get('minTradeNum', '0')))
+                grid_data.min_trade_value = Decimal(str(pair_data.get('minTradeUSDT', '5')))
+                print(f"[GridStrategyManager] 合约参数已缓存:")
+                print(f"  数量精度: {grid_data.quantity_precision}")
+                print(f"  价格精度: {grid_data.price_precision}")
+                print(f"  最小数量: {grid_data.min_trade_amount}")
+                print(f"  最小金额: {grid_data.min_trade_value}")
+
+            return True
+
+        except Exception as e:
+            print(f"[GridStrategyManager] 缓存交易参数失败: {e}")
+            print(f"[GridStrategyManager] 错误详情: {traceback.format_exc()}")
             return False
 
     def process_market_data(self, pair: str, data: dict):

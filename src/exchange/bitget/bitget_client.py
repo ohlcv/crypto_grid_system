@@ -92,6 +92,7 @@ class BitgetClient(BaseClient):
         self._connected = False
         self._subscriptions = set()
         self._subscription_manager = SubscriptionManager()
+        self.exchange = "bitget"
         
         # 创建客户端但不立即连接
         self._public_ws = BGWebSocketClient(is_private=False)
@@ -345,16 +346,21 @@ class BitgetClient(BaseClient):
             print(f"频道: {channels}")
             print(f"策略ID: {strategy_uid}")
             
-            # 移除策略订阅
+            # 1. 先从管理器移除订阅
             for channel in channels:
                 self._subscription_manager.unsubscribe(pair, channel, strategy_uid)
-                
-                # 如果该频道没有订阅者了，取消WebSocket订阅
+                    
+                # 2. 只有当这个频道没有任何订阅者时才发送取消订阅请求
                 if not self._subscription_manager.has_subscribers(pair, channel):
-                    request = WSRequest(channel=channel, pair=pair, inst_type=inst_type)
-                    self._public_ws.unsubscribe(request)
+                    try:
+                        request = WSRequest(channel=channel, pair=pair, inst_type=inst_type)
+                        self._public_ws.unsubscribe(request)
+                    except Exception as e:
+                        print(f"[BitgetClient] 取消WebSocket订阅失败: {e}")
+                        # 错误不影响结果
             
             return True
+            
         except Exception as e:
             print(f"[BitgetClient] 取消订阅失败: {e}")
             return False
