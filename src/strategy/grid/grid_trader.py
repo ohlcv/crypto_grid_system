@@ -11,7 +11,7 @@ from qtpy.QtCore import QObject, Signal
 from src.exchange.base_client import (
     BaseClient, OrderRequest, OrderType, OrderSide, TradeSide
 )
-from src.utils.common.common import adjust_decimal_places
+from src.utils.common.tools import adjust_decimal_places
 from src.utils.common.tools import find_value
 from .grid_core import GridData, GridDirection
 from src.utils.logger.log_helper import grid_logger, trade_logger

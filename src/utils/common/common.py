@@ -1,23 +1,10 @@
 # src/utils/common.py
 
-from decimal import Decimal, ROUND_HALF_UP
 import sys
 from typing import Union, Optional
 import json
 import os
 
-def adjust_decimal_places(value: Union[str, float, Decimal], 
-                         reference: Union[str, float, Decimal], 
-                         round_mode: str = ROUND_HALF_UP) -> Decimal:
-    """调整小数位数，与参考值保持一致"""
-    if isinstance(value, (float, str)):
-        value = Decimal(str(value))
-    if isinstance(reference, (float, str)):
-        reference = Decimal(str(reference))
-        
-    # 获取参考值的小数位数
-    decimal_places = abs(reference.as_tuple().exponent)
-    return value.quantize(Decimal('0.1') ** decimal_places, rounding=round_mode)
 
 def save_json(data: dict, file_path: str):
     """保存JSON数据"""

@@ -8,6 +8,7 @@ __pycache__/
 .idea/
 
 # 忽略日志文件
+log/
 logs/
 *.log
 
@@ -20,19 +21,19 @@ venv/
 Thumbs.db
 
 # 忽略 config.json 文件
-config/api_config/api_config.json
+config/
+*.json
 
 # 忽略 data 文件
-data/grid_strategy/futures_strategies.json
-data/grid_syrategy/spot_strategies.json
+data/
 
 # 忽略 测试 文件
-tests/test_api.py
+tests/
 
 # 忽略 构建 文件
 dist/
 build/
-CryptoTradingSystem.spec
+*.spec
 *.7z
 *.zip
 *.pyc
