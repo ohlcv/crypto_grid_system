@@ -132,20 +132,26 @@ class GridStrategyTab(QWidget):
     def _connect_client_signals(self, client: BaseClient):
         """连接客户端信号"""
         try:
-            # 先检查信号是否已连接
-            if hasattr(self, '_signals_connected') and self._signals_connected:
-                client.tick_received.disconnect(self._handle_market_data)
-                client.connection_status.disconnect(self.update_exchange_status)
-                client.error_occurred.disconnect(self._handle_client_error)
-                # 移除私有WS连接信号，因为验证已经由工厂处理
-                self._signals_connected = False
-                
+            # 安全断开所有可能存在的连接
+            try:
+                client.tick_received.disconnect()
+            except TypeError:
+                pass
+            try:
+                client.connection_status.disconnect()
+            except TypeError:
+                pass
+            try:
+                client.error_occurred.disconnect()
+            except TypeError:
+                pass
+
             # 连接新信号
             client.tick_received.connect(self._handle_market_data)
             client.connection_status.connect(self.update_exchange_status)
             client.error_occurred.connect(self._handle_client_error)
             self._signals_connected = True
-            
+
         except Exception as e:
             print(f"[GridStrategyTab] 连接信号失败: {e}")
             print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
