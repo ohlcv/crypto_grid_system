@@ -26,20 +26,12 @@ class BingXWebSocketClient(QObject):
     disconnected = Signal()         # 断开连接信号
 
     def __init__(self, 
-                 is_private: bool = False,
-                 api_key: str = None,
-                 api_secret: str = None,
-                 passphrase: str = None,
-                 logger: Optional[logging.Logger] = None):
-        """初始化WebSocket客户端
-        
-        Args:
-            is_private: 是否为私有连接
-            api_key: API KEY
-            api_secret: API密钥
-            passphrase: API密码
-            logger: 日志记录器
-        """
+                is_private: bool = False,
+                api_key: str = None,
+                api_secret: str = None,
+                passphrase: str = None,
+                logger: Optional[logging.Logger] = None):
+        """初始化WebSocket客户端"""
         super().__init__()
         
         self.logger = logger or logging.getLogger(__name__)
@@ -49,11 +41,21 @@ class BingXWebSocketClient(QObject):
         self._passphrase = passphrase
         self._ws_manager: Optional[BingXWSManager] = None
         self._connected = False
-        self._subscriptions: Dict[str, set] = {}  # 订阅管理
+        self._subscriptions: Dict[str, set] = {}
 
-        # 根据连接类型选择URL
-        base_url = "wss://open-api-swap.bingx.com/swap-market"
-        self._url = f"{base_url}?listenKey={self._get_listen_key()}" if is_private else base_url
+        # 设置 WebSocket Headers
+        self._headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Origin': 'https://www.bingx.com',
+            'Referer': 'https://www.bingx.com/'
+        }
+
+        # 根据连接类型选择正确的URL
+        self._url = "wss://open-ws-swap.bingx.com/ws"  # 使用新的公共WebSocket端点
+        if is_private:
+            listen_key = self._get_listen_key()
+            if listen_key:
+                self._url = f"{self._url}?listenKey={listen_key}"
 
     def _get_listen_key(self) -> Optional[str]:
         """获取私有连接的listenKey"""
@@ -69,6 +71,7 @@ class BingXWebSocketClient(QObject):
 
         self._ws_manager = BingXWSManager(
             stream_url=self._url,
+            headers=self._headers,  # 传入headers
             on_message=self._handle_message,
             on_open=self._handle_open,
             on_close=self._handle_close,
@@ -86,26 +89,21 @@ class BingXWebSocketClient(QObject):
             self.disconnected.emit()
 
     def subscribe(self, channel: str, symbol: str, callback: Optional[Callable] = None):
-        """订阅特定交易对的数据流
-        
-        Args:
-            channel: 频道名称(如 kline_1m, ticker等)
-            symbol: 交易对
-            callback: 可选的回调函数
-        """
-        stream_name = f"{symbol}@{channel}"
+        """订阅特定交易对的数据流"""
+        # 构造标准格式的dataType
+        data_type = f"market.{channel}.{symbol}"
         
         # 添加订阅
-        if stream_name not in self._subscriptions:
-            self._subscriptions[stream_name] = set()
+        if data_type not in self._subscriptions:
+            self._subscriptions[data_type] = set()
         if callback:
-            self._subscriptions[stream_name].add(callback)
+            self._subscriptions[data_type].add(callback)
 
         # 发送订阅请求
         request = {
             "id": generate_uuid(),
             "reqType": "sub",
-            "dataType": stream_name
+            "dataType": data_type
         }
         self._send_message(request)
 
@@ -116,19 +114,20 @@ class BingXWebSocketClient(QObject):
             channel: 频道名称
             symbol: 交易对
         """
-        stream_name = f"{symbol}@{channel}"
+        # 构造标准格式的dataType
+        data_type = f"market.{channel}.{symbol}"
         
         # 发送取消订阅请求
         request = {
             "id": generate_uuid(),
             "reqType": "unsub",
-            "dataType": stream_name
+            "dataType": data_type
         }
         self._send_message(request)
 
         # 移除订阅
-        if stream_name in self._subscriptions:
-            del self._subscriptions[stream_name]
+        if data_type in self._subscriptions:
+            del self._subscriptions[data_type]
 
     def _send_message(self, message: dict):
         """发送消息

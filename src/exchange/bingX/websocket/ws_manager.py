@@ -22,6 +22,7 @@ class BingXWSManager(threading.Thread):
     def __init__(
         self,
         stream_url: str,
+        headers: dict = None,  # 添加headers参数
         on_message: Optional[Callable] = None,
         on_open: Optional[Callable] = None,
         on_close: Optional[Callable] = None,
@@ -32,6 +33,7 @@ class BingXWSManager(threading.Thread):
         
         Args:
             stream_url: WebSocket连接URL
+            headers: WebSocket连接headers
             on_message: 消息回调函数
             on_open: 连接建立回调
             on_close: 连接关闭回调
@@ -41,6 +43,7 @@ class BingXWSManager(threading.Thread):
         threading.Thread.__init__(self)
         self.logger = logger or logging.getLogger(__name__)
         self.stream_url = stream_url
+        self.headers = headers or {}  # 保存headers
         self.on_message = on_message
         self.on_open = on_open
         self.on_close = on_close
@@ -55,7 +58,12 @@ class BingXWSManager(threading.Thread):
         """创建WebSocket连接"""
         try:
             self.logger.info(f"正在连接WebSocket服务器: {self.stream_url}")
-            self.ws = create_connection(self.stream_url)
+            self.ws = create_connection(
+                self.stream_url,
+                header=self.headers,  # 使用headers
+                enable_multithread=True,
+                suppress_origin=True
+            )
             self.logger.info("WebSocket连接已建立")
             self._callback(self.on_open)
         except Exception as e:
@@ -94,16 +102,20 @@ class BingXWSManager(threading.Thread):
         try:
             data = self.ws.recv()
             
-            # 处理gzip压缩数据
-            if isinstance(data, bytes):
-                compressed_data = gzip.GzipFile(fileobj=io.BytesIO(data), mode='rb')
-                data = compressed_data.read().decode('utf-8')
-            
             # 处理心跳消息
-            if data == "ping":
-                self.ws.send("pong")
+            if data == "Ping":
+                self.ws.send("Pong")
                 return
                 
+            # 处理gzip压缩数据
+            if isinstance(data, bytes):
+                try:
+                    compressed_data = gzip.GzipFile(fileobj=io.BytesIO(data), mode='rb')
+                    data = compressed_data.read().decode('utf-8')
+                except Exception as e:
+                    self.logger.error(f"解压数据失败: {e}")
+                    return
+            
             # 回调处理消息
             self._callback(self.on_message, data)
             
