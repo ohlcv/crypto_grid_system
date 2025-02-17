@@ -11,6 +11,7 @@ from src.exchange.base_client import ExchangeType
 from src.ui.tabs.grid_strategy_tab import GridStrategyTab
 from src.exchange.client_factory import ExchangeClientFactory
 from src.utils.common.common import resource_path
+from src.ui.components.welcome_page import WelcomePage
 from qt_material import apply_stylesheet
 from qtpy.QtCore import QTimer
 
@@ -45,7 +46,11 @@ class MainWindow(QMainWindow):
         # 创建主标签页
         self.main_tab_widget = QTabWidget()
         layout.addWidget(self.main_tab_widget)
-        
+
+        # 添加欢迎页面
+        welcome_widget = WelcomePage()
+        self.main_tab_widget.addTab(welcome_widget, "使用指南")
+
         # 创建网格策略标签页
         grid_strategy_widget = QWidget()
         grid_strategy_layout = QVBoxLayout(grid_strategy_widget)
