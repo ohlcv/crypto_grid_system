@@ -68,6 +68,7 @@ class GridStrategyTab(QWidget):
         self.strategy_manager = GridStrategyManager()
         
         self.tab_id = str(uuid.uuid4())  # 生成唯一的标签页ID
+        self.current_exchange = None    # 当前选中的交易所
         self.exchange_client: Optional[BaseClient] = None
         self.config_path = os.path.join('./config/api_config', f'api_config.json')
         self.data_path = os.path.join('./data', 'grid_strategy', f'{inst_type.lower()}_strategies.json')
@@ -111,21 +112,18 @@ class GridStrategyTab(QWidget):
         # print("[GridStrategyTab] 工厂和策略管理器信号已连接")
 
     def _handle_client_status(self, tab_id: str, status: str):
-        """处理客户端状态变化"""
         if tab_id != self.tab_id:
             return
             
-        # 更新状态显示
         self.connection_status_label.setText(f"连接状态：{status}")
         
-        # 根据状态设置样式
-        if status in ["就绪"]:
+        if status == "就绪":
             self.connection_status_label.setStyleSheet("color: green")
         elif status in ["连接中", "验证中"]:
             self.connection_status_label.setStyleSheet("color: orange") 
         else:
             self.connection_status_label.setStyleSheet("color: red")
-
+            
         # 处理失败状态
         if status == "失败":
             self._reset_api_inputs()
@@ -258,113 +256,14 @@ class GridStrategyTab(QWidget):
         """处理客户端创建"""
         print("\n[GridStrategyTab] === Client Created ===")
         try:
-            if client is self.exchange_client:
+            if self.exchange_client is client:  # 直接比较对象引用
                 print("[GridStrategyTab] 客户端实例匹配，重新连接信号")
                 self._connect_client_signals(client)
                 self.update_exchange_status(client.is_connected)
-                # self.test_connection()
-
         except Exception as e:
             print(f"[GridStrategyTab] 客户端创建处理错误: {e}")
             print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
             self.show_error_message(f"客户端创建处理失败: {str(e)}")
-
-    def load_api_config(self):
-        """加载API配置"""
-        if self.strategy_manager.has_running_strategies():
-            self.show_error_message("请先删除所有策略")
-            return
-
-        # 确保文件存在
-        create_file_if_not_exists(self.config_path)
-
-        try:
-            if os.path.exists(self.config_path):
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    content = f.read().strip()  # 读取并去除多余的空白
-                    if not content:  # 如果文件为空
-                        print("[GridStrategyTab] 配置文件为空，使用默认配置")
-                        config = {
-                            'exchange': 'bitget',
-                            'user_id': '',
-                            'api_key': '',
-                            'api_secret': '',
-                            'passphrase': ''
-                        }
-                    else:
-                        config = json.loads(content)  # 尝试加载配置
-        except json.JSONDecodeError:
-            # 如果文件内容无效，使用默认配置
-            print("[GridStrategyTab] 配置文件无效，使用默认配置")
-            config = {
-                'exchange': 'bitget',
-                'user_id': '',
-                'api_key': '',
-                'api_secret': '',
-                'passphrase': ''
-            }
-
-        # 保存配置到 self.config
-        self.config = config
-
-        # 填充UI
-        exchange = config.get('exchange', 'bitget')
-        self.exchange_combo.setCurrentText(exchange.capitalize())
-        self.user_id_input.setText(config.get('user_id', ''))
-        self.api_key_input.setText(config.get('api_key', ''))
-        self.secret_key_input.setText(config.get('api_secret', ''))
-        self.passphrase_input.setText(config.get('passphrase', ''))
-
-        if all([config.get('api_key'), config.get('api_secret'), config.get('passphrase')]):
-            exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
-            self._reset_and_create_client(config, exchange_type)
-        else:
-            print("[GridStrategyTab] API配置不完整，未创建客户端")
-
-    def save_api_config(self, auto_save: bool = False):
-        """保存API配置"""
-        if not auto_save and self.strategy_manager.has_running_strategies():
-            self.show_error_message("请先删除所有策略")
-            return
-
-        # 获取输入值
-        api_key = self.api_key_input.text().strip()
-        api_secret = self.secret_key_input.text().strip()
-        passphrase = self.passphrase_input.text().strip()
-        user_id = self.user_id_input.text().strip()
-        exchange = self.exchange_combo.currentData()
-
-        if not all([api_key, api_secret, passphrase]):
-            self.show_error_message("API Key, Secret Key 和 Passphrase 不能为空！")
-            return
-
-        config = {
-            'exchange': exchange,
-            'user_id': user_id,
-            'api_key': api_key,
-            'api_secret': api_secret,
-            'passphrase': passphrase
-        }
-
-        try:
-            # 保存配置
-            os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-            with open(self.config_path, 'w') as f:
-                json.dump(config, f, indent=4)
-
-            # 更新 self.config
-            self.config = config
-            print("[GridStrategyTab] 配置已保存:", {
-                'exchange': self.config['exchange'],
-                'user_id': self.config['user_id'],
-                'api_key': self.config['api_key'][-6:]
-            })
-            if not auto_save:
-                exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
-                self._reset_and_create_client(config, exchange_type)
-
-        except Exception as e:
-            self.show_error_message(f"保存API配置失败: {str(e)}")
 
     def check_client_status(self) -> bool:
         """检查交易所客户端的连接状态"""
@@ -379,29 +278,51 @@ class GridStrategyTab(QWidget):
 
     def _reset_and_create_client(self, config: dict, exchange_type: ExchangeType):
         """重置客户端并创建新客户端"""
-        self.config = config  # 保存当前配置
-        # print("[GridStrategyTab] 设置新的配置")
-        # 重置旧客户端
-        # print("[GridStrategyTab] 开始重置客户端")
-        if self.exchange_client:
-            old_client = self.exchange_client
-            self.exchange_client = None
-            self._update_ws_status(False, False)
-            print(f"[GridStrategyTab] 已重置旧客户端: {old_client}")
-            def destroy_old_client():
-                self.client_factory.destroy_client(self.tab_id)
-                print("[GridStrategyTab] 旧客户端已销毁")
-            threading.Thread(target=destroy_old_client, daemon=True).start()
-        # 创建新客户端
-        # print("[GridStrategyTab] 开始创建新客户端")
-        new_client = self.client_factory.create_client(self.tab_id, config['exchange'], config, exchange_type)
-        if new_client:
-            self.exchange_client = new_client
-            print(f"[GridStrategyTab] 新客户端已创建: {new_client}")
-            self._connect_client_signals(self.exchange_client)
-            self.update_exchange_status(self.exchange_client.is_connected)
-        else:
-            print("[GridStrategyTab] 客户端创建失败")
+        try:
+            current_exchange = self.config.get('current', '').lower()
+            if not current_exchange:
+                raise ValueError("未指定当前交易所")
+                
+            # 构建传递给工厂的配置
+            client_config = {
+                'exchange': current_exchange,  # 添加交易所名称
+                'user_id': config.get('user_id', ''),
+                'api_key': config.get('api_key', ''),
+                'api_secret': config.get('api_secret', ''),
+                'passphrase': config.get('passphrase', '')
+            }
+
+            # 重置旧客户端
+            if self.exchange_client:
+                old_client = self.exchange_client
+                self.exchange_client = None
+                self._update_ws_status(False, False)
+                print(f"[GridStrategyTab] 已重置旧客户端: {old_client}")
+                def destroy_old_client():
+                    self.client_factory.destroy_client(self.tab_id)
+                    print("[GridStrategyTab] 旧客户端已销毁")
+                threading.Thread(target=destroy_old_client, daemon=True).start()
+
+            # 创建新客户端
+            new_client = self.client_factory.create_client(
+                self.tab_id, 
+                current_exchange,  # 使用当前选中的交易所
+                client_config, 
+                exchange_type
+            )
+            
+            if new_client:
+                self.exchange_client = new_client
+                print(f"[GridStrategyTab] 新客户端已创建: {new_client}")
+                self._connect_client_signals(self.exchange_client)
+                self.update_exchange_status(self.exchange_client.is_connected)
+            else:
+                print("[GridStrategyTab] 客户端创建失败")
+                
+        except Exception as e:
+            print(f"[GridStrategyTab] 创建客户端失败: {e}")
+            print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
+            self.show_error_message(f"创建客户端失败: {str(e)}")
 
     def _handle_client_error(self, error_msg: str):
         """处理客户端错误"""
@@ -452,6 +373,63 @@ class GridStrategyTab(QWidget):
         layout.addLayout(button_layout)
         self.setLayout(layout)
 
+    def on_exchange_changed(self, new_exchange: str):
+        """处理交易所切换"""
+        new_exchange = new_exchange.lower()
+        
+        if not self.current_exchange:
+            self.current_exchange = new_exchange
+            return
+            
+        if new_exchange == self.current_exchange.lower():
+            return
+
+        # 检查是否有运行中的策略
+        if self.strategy_manager.has_running_strategies():
+            self.show_error_message("请先停止所有运行中的策略再切换交易所")
+            self.exchange_combo.blockSignals(True)
+            self.exchange_combo.setCurrentText(self.current_exchange)
+            self.exchange_combo.blockSignals(False)
+            return
+
+        # 确认切换
+        reply = QMessageBox.question(
+            self,
+            "切换交易所",
+            f"确定要切换到 {new_exchange.capitalize()} 交易所吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # 获取新交易所的配置
+            exchange_config = self.config.get(new_exchange, {})
+            
+            # 更新UI显示
+            self.user_id_input.setText(exchange_config.get('user_id', ''))
+            self.api_key_input.setText(exchange_config.get('api_key', ''))
+            self.secret_key_input.setText(exchange_config.get('api_secret', ''))
+            self.passphrase_input.setText(exchange_config.get('passphrase', ''))
+            
+            # 更新当前交易所
+            self.current_exchange = new_exchange.capitalize()
+            self.config['current'] = new_exchange
+            
+            # 断开现有客户端连接
+            self._disconnect_client()
+            
+            # 如果有完整的API配置，创建新客户端
+            if all([exchange_config.get('api_key'), exchange_config.get('api_secret'), exchange_config.get('passphrase')]):
+                exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+                self._reset_and_create_client(exchange_config, exchange_type)
+                
+            # 保存配置
+            self.save_api_config(auto_save=True)
+        else:
+            # 取消切换，恢复选择
+            self.exchange_combo.blockSignals(True)
+            self.exchange_combo.setCurrentText(self.current_exchange)
+            self.exchange_combo.blockSignals(False)
+
     def _setup_api_layout(self) -> QVBoxLayout:
         """设置API配置区域"""
         api_layout = QVBoxLayout()
@@ -463,47 +441,59 @@ class GridStrategyTab(QWidget):
         user_input_layout.addWidget(QLabel("User ID:"))
         self.user_id_input = QLineEdit()
         self.user_id_input.setPlaceholderText("请输入 User ID")
-        user_input_layout.addWidget(self.user_id_input, stretch=2)  # stretch factor = 2
+        user_input_layout.addWidget(self.user_id_input, stretch=2)  
 
         # API Key
         user_input_layout.addWidget(QLabel("API Key:"))
         self.api_key_input = QLineEdit()
         self.api_key_input.setPlaceholderText("请输入 API Key")
         self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        user_input_layout.addWidget(self.api_key_input, stretch=4)  # stretch factor = 3
+        user_input_layout.addWidget(self.api_key_input, stretch=4)
 
         # Secret Key
         user_input_layout.addWidget(QLabel("Secret Key:"))
         self.secret_key_input = QLineEdit()
         self.secret_key_input.setPlaceholderText("请输入 Secret Key")
         self.secret_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        user_input_layout.addWidget(self.secret_key_input, stretch=5)  # stretch factor = 3
+        user_input_layout.addWidget(self.secret_key_input, stretch=5)
 
         # Passphrase
         user_input_layout.addWidget(QLabel("Passphrase:"))
         self.passphrase_input = QLineEdit()
         self.passphrase_input.setPlaceholderText("请输入 Passphrase")
         self.passphrase_input.setEchoMode(QLineEdit.EchoMode.Password)
-        user_input_layout.addWidget(self.passphrase_input, stretch=2)  # stretch factor = 3
+        user_input_layout.addWidget(self.passphrase_input, stretch=2)
 
         # 显示/隐藏按钮
         self.show_api_button = QPushButton("显示")
         self.show_api_button.clicked.connect(self._toggle_api_visibility)
-        user_input_layout.addWidget(self.show_api_button, stretch=1)  # stretch factor = 1
+        user_input_layout.addWidget(self.show_api_button, stretch=1)
 
         api_layout.addLayout(user_input_layout)
 
         # 操作按钮布局
         operation_layout = QHBoxLayout()
+
         # 交易所选择
         exchange_layout = QHBoxLayout()
         exchange_layout.addWidget(QLabel("交易所:"))
         self.exchange_combo = QComboBox()
-        supported_exchanges = self.client_factory.get_supported_exchanges()
-        for exchange in supported_exchanges:
-            self.exchange_combo.addItem(exchange.capitalize(), exchange)
-        exchange_layout.addWidget(self.exchange_combo)
+        self.exchange_combo.currentTextChanged.connect(self.on_exchange_changed)
         
+        # 获取支持当前交易类型的交易所列表
+        exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+        available_exchanges = self.client_factory.registry.get_available_exchanges(exchange_type)
+        
+        # 设置交易所选项
+        for exchange in self.client_factory.registry.get_all_exchanges():
+            is_supported = exchange in available_exchanges
+            self.exchange_combo.addItem(exchange.capitalize(), exchange)
+            if not is_supported:
+                # 禁用不支持的交易所
+                index = self.exchange_combo.count() - 1
+                self.exchange_combo.model().item(index).setEnabled(False)
+
+        exchange_layout.addWidget(self.exchange_combo)
         operation_layout.addLayout(exchange_layout)
 
         # API配置按钮
@@ -519,7 +509,7 @@ class GridStrategyTab(QWidget):
         self.test_connection_button.clicked.connect(self.test_connection)
         operation_layout.addWidget(self.test_connection_button)
 
-        # 状态标签
+        # 连接状态标签组
         self.connection_status_label = QLabel("连接状态：False")
         self.connection_status_label.setStyleSheet("color: red;")
         operation_layout.addWidget(self.connection_status_label)
@@ -531,14 +521,118 @@ class GridStrategyTab(QWidget):
         self.private_ws_label = QLabel("私有：✗")
         self.private_ws_label.setStyleSheet("color: red;")
         operation_layout.addWidget(self.private_ws_label)
+
         # 添加线程信息标签
         self.thread_info_label = QLabel()
-        self.update_thread_info_label()  # 初始化显示
+        self.update_thread_info_label()
         operation_layout.addWidget(self.thread_info_label)
         operation_layout.addStretch()
         api_layout.addLayout(operation_layout)
 
         return api_layout
+
+    def load_api_config(self):
+        """加载API配置"""
+        if self.strategy_manager.has_running_strategies():
+            self.show_error_message("请先删除所有策略")
+            return
+
+        # 确保文件存在
+        create_file_if_not_exists(self.config_path)
+
+        try:
+            if os.path.exists(self.config_path):
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                    if not content:  # 空文件
+                        config = self._create_default_config()
+                    else:
+                        config = json.loads(content)
+            else:
+                config = self._create_default_config()
+
+            # 设置当前交易所
+            current_exchange = config.get('current', '').lower()
+            if not current_exchange:
+                exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+                available_exchanges = self.client_factory.registry.get_available_exchanges(exchange_type)
+                current_exchange = available_exchanges[0] if available_exchanges else "bitget"
+                config['current'] = current_exchange
+
+            # 获取当前交易所的API配置
+            exchange_config = config.get(current_exchange, {})
+            
+            # 更新UI
+            self.current_exchange = current_exchange.capitalize()
+            self.exchange_combo.blockSignals(True)
+            self.exchange_combo.setCurrentText(self.current_exchange)
+            self.exchange_combo.blockSignals(False)
+
+            self.user_id_input.setText(exchange_config.get('user_id', ''))
+            self.api_key_input.setText(exchange_config.get('api_key', ''))
+            self.secret_key_input.setText(exchange_config.get('api_secret', ''))
+            self.passphrase_input.setText(exchange_config.get('passphrase', ''))
+
+            self.config = config  # 保存整个配置
+
+            if all([exchange_config.get('api_key'), exchange_config.get('api_secret'), exchange_config.get('passphrase')]):
+                exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+                self._reset_and_create_client(exchange_config, exchange_type)
+
+        except Exception as e:
+            self.show_error_message(f"加载配置失败: {str(e)}")
+
+    def save_api_config(self, auto_save: bool = False):
+        """保存API配置"""
+        if not auto_save and self.strategy_manager.has_running_strategies():
+            self.show_error_message("请先删除所有策略")
+            return
+
+        current_exchange = self.exchange_combo.currentText().lower()
+        
+        # 获取当前输入的API信息
+        new_config = {
+            'user_id': self.user_id_input.text().strip(),
+            'api_key': self.api_key_input.text().strip(),
+            'api_secret': self.secret_key_input.text().strip(),
+            'passphrase': self.passphrase_input.text().strip()
+        }
+
+        # 更新配置
+        if not hasattr(self, 'config'):
+            self.config = self._create_default_config()
+        
+        self.config[current_exchange] = new_config
+        self.config['current'] = current_exchange
+
+        try:
+            # 保存配置
+            os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+            with open(self.config_path, 'w') as f:
+                json.dump(self.config, f, indent=4)
+
+            if not auto_save:
+                exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+                self._reset_and_create_client(new_config, exchange_type)
+
+        except Exception as e:
+            self.show_error_message(f"保存API配置失败: {str(e)}")
+
+    def _create_default_config(self) -> dict:
+        """创建默认配置"""
+        exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+        available_exchanges = self.client_factory.registry.get_available_exchanges(exchange_type)
+        default_exchange = available_exchanges[0] if available_exchanges else "bitget"
+        
+        return {
+            'current': default_exchange,
+            default_exchange: {
+                'user_id': '',
+                'api_key': '',
+                'api_secret': '',
+                'passphrase': ''
+            }
+        }
 
     def _setup_input_layout(self) -> QHBoxLayout:
         """设置输入区域"""

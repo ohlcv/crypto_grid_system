@@ -7,6 +7,7 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import Qt
 from qtpy.QtGui import QIcon
+from src.exchange.base_client import ExchangeType
 from src.ui.tabs.grid_strategy_tab import GridStrategyTab
 from src.exchange.client_factory import ExchangeClientFactory
 from src.utils.common.common import resource_path
@@ -54,13 +55,15 @@ class MainWindow(QMainWindow):
         grid_strategy_layout.addWidget(self.grid_tab_widget)
         
         # 添加现货网格标签页
-        spot_tab = GridStrategyTab("SPOT", self.client_factory)
-        self.grid_tab_widget.addTab(spot_tab, "现货网格")
+        inst_type = ExchangeType.SPOT
+        if self.client_factory.get_supported_exchanges(inst_type):  # 检查是否有交易所支持现货
+            spot_tab = GridStrategyTab("SPOT", self.client_factory)
+            self.grid_tab_widget.addTab(spot_tab, "现货网格")
         
         # 将网格策略页面添加到主标签页
         self.main_tab_widget.addTab(grid_strategy_widget, "网格策略")
         
-        # 使用 QTimer 延迟 1 秒后添加合约网格标签页
+        # 使用 QTimer 延迟 1 秒后添加合约网格标签页  
         QTimer.singleShot(1000, self.add_futures_tab)
 
     def add_futures_tab(self):
