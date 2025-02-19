@@ -86,7 +86,7 @@ class GridTrader(QObject):
         print(f"\n[GridTrader] === 初始化网格交易器 === {grid_data.uid}")
         self.logger = grid_logger
         self.trade_logger = trade_logger
-        self.logger.info(f"创建网格交易器 - {grid_data.pair} ({grid_data.uid})")
+        # self.logger.info(f"创建网格交易器 - {grid_data.pair} ({grid_data.uid})")
 
         self.grid_data = grid_data
         self.client = None  # 初始化时不设置client

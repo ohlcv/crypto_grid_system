@@ -27,7 +27,7 @@ class GridStrategyManager(QObject):
         self._data: Dict[str, GridData] = {}  # uid -> GridData
         self._lock = threading.Lock()
 
-    def create_strategy(self, uid: str, pair: str, exchange: str, inst_type: str) -> Optional[GridData]:
+    def create_strategy(self, uid: str, pair: str, exchange: str, inst_type: str, is_long: bool = True) -> Optional[GridData]:
         """创建新策略"""
         print(f"\n[GridStrategyManager] === 创建新策略 === {uid}")
         print(f"[GridStrategyManager] 交易对: {pair}")
@@ -41,17 +41,20 @@ class GridStrategyManager(QObject):
                 return None
 
         try:
-            # 创建策略数据
+            # 初始化策略数据
             print(f"[GridStrategyManager] 初始化策略数据...")
             grid_data = GridData(uid, pair, exchange, inst_type)
-            self._data[uid] = grid_data
             
-            # 创建策略实例（只传入grid_data）
+            # 设置方向
+            grid_data.set_direction(is_long=(inst_type == "SPOT" or is_long))
+            grid_data.row_dict["方向"] = "long" if is_long else "short"
+            
+            # 创建策略实例
             print(f"[GridStrategyManager] 创建策略实例...")
-            trader = GridTrader(grid_data)  
-            self._strategies[uid] = trader
-            print(f"[GridStrategyManager] 策略实例创建成功: {uid}")
+            self._data[uid] = grid_data
+            self._strategies[uid] = GridTrader(grid_data)
             
+            print(f"[GridStrategyManager] 策略实例创建成功: {uid}")
             # 打印当前线程状态
             # print("\n[GridStrategyManager] 策略创建后线程状态:")
             # for t in threading.enumerate():
@@ -96,9 +99,9 @@ class GridStrategyManager(QObject):
     def delete_strategy(self, uid: str) -> bool:
         """删除策略"""
         print(f"\n[GridStrategyManager] === 删除策略 === {uid}")
-        print(f"[GridStrategyManager] 当前线程状态:")
-        for t in threading.enumerate():
-            print(f"  - {t.name} (ID: {t.ident}, 活跃: {t.is_alive()})")
+        # print(f"[GridStrategyManager] 当前线程状态:")
+        # for t in threading.enumerate():
+        #     print(f"  - {t.name} (ID: {t.ident}, 活跃: {t.is_alive()})")
         
         try:
             # 如果策略正在运行，先停止它
@@ -165,9 +168,9 @@ class GridStrategyManager(QObject):
     def start_strategy(self, uid: str, exchange_client: BaseClient) -> bool:
         """启动策略运行"""
         print(f"\n[GridStrategyManager] === 启动策略运行 === {uid}")
-        print(f"[GridStrategyManager] 当前线程状态:")
-        for t in threading.enumerate():
-            print(f"  - {t.name} (ID: {t.ident}, 活跃: {t.is_alive()})")
+        # print(f"[GridStrategyManager] 当前线程状态:")
+        # for t in threading.enumerate():
+        #     print(f"  - {t.name} (ID: {t.ident}, 活跃: {t.is_alive()})")
         
         try:
             # 获取grid_data
@@ -214,9 +217,9 @@ class GridStrategyManager(QObject):
                 grid_data.data_updated.emit(uid)
                 
                 # 打印更新后的线程状态
-                print("\n[GridStrategyManager] 策略启动后线程状态:")
-                for t in threading.enumerate():
-                    print(f"  - {t.name} (ID: {t.ident}, 活跃: {t.is_alive()})")
+                # print("\n[GridStrategyManager] 策略启动后线程状态:")
+                # for t in threading.enumerate():
+                #     print(f"  - {t.name} (ID: {t.ident}, 活跃: {t.is_alive()})")
                 return True
                 
             return False

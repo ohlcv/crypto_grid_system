@@ -83,8 +83,8 @@ class StopLossConfig:
     
 class GridDirection(Enum):
     """网格方向"""
-    LONG = "long"   # 做多
-    SHORT = "short" # 做空
+    LONG = "LONG"   # 做多 
+    SHORT = "SHORT" # 做空
 
 @dataclass
 class LevelConfig:
@@ -151,7 +151,7 @@ class GridData(QObject):
         }
 
         self.logger = grid_logger
-        self.logger.info(f"创建网格数据: {pair} ({uid})")
+        # self.logger.info(f"创建网格数据: {pair} ({uid})")
 
     def reset_level(self, level: int) -> bool:
         """
@@ -226,9 +226,13 @@ class GridData(QObject):
 
     def set_direction(self, is_long: bool):
         """设置交易方向"""
-        self.logger.info(f"设置交易方向 - {self.uid} - {'做多' if is_long else '做空'}")
         self.direction = GridDirection.LONG if is_long else GridDirection.SHORT
-        self.set_row_value("方向", self.direction.value)
+        self.row_dict["方向"] = self.direction.value  # 直接使用枚举值
+        self.logger.info(f"设置交易方向 - {self.uid} - {self.direction.value}")
+
+    def is_long(self) -> bool:
+        """是否做多"""
+        return self.direction == GridDirection.LONG
 
     def update_operation_status(self, operation: dict):
         """更新操作状态"""
@@ -413,8 +417,8 @@ class GridData(QObject):
 
     def update_level(self, level: int, config: dict) -> None:
         """更新网格层配置"""
-        print(f"\n[GridData] === 更新网格层 {level} ===")
-        print(f"[GridData] 配置数据: {config}")
+        # print(f"\n[GridData] === 更新网格层 {level} ===")
+        # print(f"[GridData] 配置数据: {config}")
         
         # 获取层级配置
         level_config = self.grid_levels.get(level)
@@ -428,12 +432,12 @@ class GridData(QObject):
                 invest_amount=Decimal('0'),
             )
             level_config = self.grid_levels[level]
-            print(f"[GridData] 层级 {level} 初始化完成")
+            # print(f"[GridData] 层级 {level} 初始化完成")
 
         try:
             # 检查是否有成交信息
             has_filled_data = all(key in config for key in ['filled_amount', 'filled_price', 'filled_time', 'is_filled'])
-            print(f"[GridData] 是否包含成交信息: {has_filled_data}")
+            # print(f"[GridData] 是否包含成交信息: {has_filled_data}")
             
             if has_filled_data:
                 # 更新成交信息
@@ -444,7 +448,7 @@ class GridData(QObject):
                     'is_filled': config['is_filled'],
                     'order_id': config.get('order_id')
                 }
-                print(f"[GridData] 更新成交信息: {filled_data}")
+                # print(f"[GridData] 更新成交信息: {filled_data}")
                 
                 # 使用object.__setattr__来更新成交信息
                 for key, value in filled_data.items():
@@ -462,18 +466,18 @@ class GridData(QObject):
             if "成交额" in config:
                 level_config.invest_amount = Decimal(str(config["成交额"]))
 
-            print(f"[GridData] 层级 {level} 更新后的配置:")
-            print(f"  间隔%: {level_config.interval_percent}")
-            print(f"  开仓反弹%: {level_config.open_rebound_percent}")
-            print(f"  平仓反弹%: {level_config.close_rebound_percent}")
-            print(f"  止盈%: {level_config.take_profit_percent}")
-            print(f"  成交额: {level_config.invest_amount}")
-            print(f"  是否已成交: {level_config.is_filled}")
-            if level_config.is_filled:
-                print(f"  成交数量: {level_config.filled_amount}")
-                print(f"  成交价格: {level_config.filled_price}")
-                print(f"  成交时间: {level_config.filled_time}")
-                print(f"  订单ID: {level_config.order_id}")
+            # print(f"[GridData] 层级 {level} 更新后的配置:")
+            # print(f"  间隔%: {level_config.interval_percent}")
+            # print(f"  开仓反弹%: {level_config.open_rebound_percent}")
+            # print(f"  平仓反弹%: {level_config.close_rebound_percent}")
+            # print(f"  止盈%: {level_config.take_profit_percent}")
+            # print(f"  成交额: {level_config.invest_amount}")
+            # print(f"  是否已成交: {level_config.is_filled}")
+            # if level_config.is_filled:
+            #     print(f"  成交数量: {level_config.filled_amount}")
+            #     print(f"  成交价格: {level_config.filled_price}")
+            #     print(f"  成交时间: {level_config.filled_time}")
+            #     print(f"  订单ID: {level_config.order_id}")
 
         except Exception as e:
             print(f"[GridData] 更新层级配置错误: {e}")
@@ -658,10 +662,6 @@ class GridData(QObject):
             if not self.grid_levels[level].is_filled:
                 return level
         return None  # 已开满仓
-
-    def is_long(self) -> bool:
-        """是否做多"""
-        return self.direction == GridDirection.LONG
 
     def is_spot(self) -> bool:
         """是否现货"""

@@ -101,9 +101,19 @@ class GridSetting(QTableWidget):
     def setRowProperty(self, row, key, value):
         """为行设置属性"""
         for col in range(self.columnCount()):
-            item = self.item(row, col) or QTableWidgetItem()
-            item.setData(Qt.ItemDataRole.UserRole + 1, {key: value})
-            self.setItem(row, col, item)
+            # 获取现有的 item
+            item = self.item(row, col)
+            if item:
+                # 如果已存在 item，直接更新其数据
+                data = item.data(Qt.ItemDataRole.UserRole + 1) or {}
+                data[key] = value
+                item.setData(Qt.ItemDataRole.UserRole + 1, data)
+            else:
+                # 如果不存在 item，创建新的
+                new_item = QTableWidgetItem()
+                new_item.setData(Qt.ItemDataRole.UserRole + 1, {key: value})
+                # 设置新的 item
+                self.setItem(row, col, new_item)
 
     def getRowProperty(self, row, key):
         """获取行的属性"""
@@ -186,13 +196,19 @@ class GridSetting(QTableWidget):
                 line_edit.setValidator(validator)
             self.setCellWidget(row, col, line_edit)
         else:
-            item = QTableWidgetItem(str(value))
+            # 创建新的 QTableWidgetItem 实例
+            item = QTableWidgetItem()
+            item.setText(str(value))
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             if col == 0:  # 修复第一列显示问题
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            # 先移除旧的 item（如果存在）
+            old_item = self.item(row, col)
+            if old_item:
+                self.takeItem(row, col)
+            # 设置新的 item
             self.setItem(row, col, item)
-
 class GridDialog(QDialog):
     def __init__(self, grid_data):
         super().__init__()
@@ -380,7 +396,7 @@ class GridDialog(QDialog):
             open_callback = self.validate_input(self.open_rebound_input.text(), float, "开仓反弹%")
             close_callback = self.validate_input(self.close_rebound_input.text(), float, "平仓反弹%")
 
-            # 计算每格投入
+            # 计算每格投入 
             step = budget / layers
             if step < 5:  # 再次验证每格投资额
                 raise ValueError(

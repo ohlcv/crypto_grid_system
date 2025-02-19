@@ -83,9 +83,12 @@ class SubscriptionManager:
 class BitgetClient(BaseClient):
     error = Signal(str)
     private_ws_connected = Signal()
+    ws_status_changed = Signal(bool, bool)
 
     def __init__(self, api_key: str, api_secret: str, passphrase: str, inst_type: ExchangeType):
         super().__init__(inst_type)
+        print(f"[BitgetClient] 开始初始化{inst_type.value}客户端")
+        
         self._api_key = api_key
         self._api_secret = api_secret
         self._passphrase = passphrase
@@ -93,15 +96,6 @@ class BitgetClient(BaseClient):
         self._subscriptions = set()
         self._subscription_manager = SubscriptionManager()
         self.exchange = "bitget"
-        
-        # 创建客户端但不立即连接
-        self._public_ws = BGWebSocketClient(is_private=False)
-        self._private_ws = BGWebSocketClient(
-            is_private=True,
-            api_key=api_key,
-            api_secret=api_secret,
-            passphrase=passphrase
-        )
         
         # 创建REST API客户端
         if inst_type == ExchangeType.SPOT:
@@ -111,23 +105,149 @@ class BitgetClient(BaseClient):
 
         self.logger = ws_logger
         self.api_logger = api_logger
-        self.logger.info(f"初始化Bitget客户端 - {inst_type.value}")
         
-        # 连接信号
-        self._connect_signals()
+        # 创建WebSocket客户端
+        self._public_ws = None
+        self._private_ws = None
+        self._init_websockets()
+        
+        print(f"[BitgetClient] {inst_type.value}客户端初始化完成")
 
-    def _load_valid_pair_async(self):
-        """异步加载所有有效的交易对"""
+    def _init_websockets(self):
+        """初始化WebSocket客户端"""
         try:
-            print("[BitgetClient] 正在后台加载交易对列表...")
-            response = self.rest_api.get_pairs()
-            if response.get('code') == '00000':
-                pairs = response.get('data', [])
-                for pair_info in pairs:
-                    self._subscription_manager.add_valid_pair(pair_info['symbol'])
-                print(f"[BitgetClient] 已加载 {len(pairs)} 个交易对")
+            # 创建客户端但不立即连接
+            self._public_ws = BGWebSocketClient(is_private=False)
+            self._private_ws = BGWebSocketClient(
+                is_private=True,
+                api_key=self._api_key,
+                api_secret=self._api_secret,
+                passphrase=self._passphrase
+            )
+            
+            # 连接信号
+            self._connect_signals()
+            
         except Exception as e:
-            print(f"[BitgetClient] 后台加载交易对失败: {e}")
+            print(f"[BitgetClient] WebSocket初始化失败: {e}")
+            raise
+
+    def _handle_public_connected(self):
+        """处理公共WS连接成功"""
+        print("[BitgetClient] 公共WebSocket连接成功,发送状态更新信号")
+        self.ws_status_changed.emit(True, True)  # 修改为正确的状态值
+        self._check_connection_status()
+
+    def _handle_public_disconnected(self):
+        """处理公共WS断开连接"""
+        print("[BitgetClient] 公共WebSocket断开连接,发送状态更新信号")
+        self.ws_status_changed.emit(True, False)  # 修改为正确的状态值
+        self._check_connection_status()
+
+    def _check_connection_status(self):
+        """检查连接状态"""
+        try:
+            # 获取当前连接状态
+            ws_status = self.get_ws_status()
+            current_status = ws_status["public"] and ws_status["private"]
+            
+            print(f"[BitgetClient] 检查连接状态:")
+            print(f"- 公有WS状态: {ws_status['public']}")
+            print(f"- 私有WS状态: {ws_status['private']}")
+            print(f"- 整体状态: {current_status}")
+            
+            # 如果状态发生变化
+            if self._connected != current_status:
+                self._connected = current_status
+                print(f"[BitgetClient] {self.inst_type.value} 连接状态更新: {current_status}")
+                
+                # 发送状态变化信号
+                if current_status:
+                    self.connected.emit()
+                else:
+                    self.disconnected.emit()
+                self.connection_status.emit(current_status)
+                
+        except Exception as e:
+            print(f"[BitgetClient] 检查连接状态失败: {e}")
+
+    def _handle_login_success(self):
+        """处理登录成功事件"""
+        print("[BitgetClient] 私有WebSocket登录成功,发送状态更新信号")
+        self.ws_status_changed.emit(False, True)
+        self._check_connection_status()
+
+    def _connect_signals(self):
+        """连接WebSocket信号"""
+        print("[BitgetClient] Connecting public WebSocket signals")
+        self._public_ws.message_received.connect(self._handle_public_message)
+        self._public_ws.error.connect(lambda e: self._handle_error("ws_public", e))
+        self._public_ws.connected.connect(self._handle_public_connected)
+        self._public_ws.disconnected.connect(self._handle_public_disconnected)
+
+        print("[BitgetClient] Connecting private WebSocket signals")
+        self._private_ws.message_received.connect(self._handle_private_message)
+        self._private_ws.error.connect(lambda e: self._handle_error("ws_private", e))
+        self._private_ws.connected.connect(self._handle_private_connected)
+        self._private_ws.disconnected.connect(self._handle_private_disconnected)
+
+    def _handle_private_disconnected(self):
+        """处理私有WS断开连接"""
+        print("[BitgetClient] 私有WebSocket断开连接,发送状态更新信号")
+        self.ws_status_changed.emit(False, False)
+        # print("=== Private WebSocket Disconnected ===")
+        # print(f"Current connection status: public={self._public_ws.is_connected}, private={self._private_ws.is_connected}")
+        self._check_connection_status()
+
+    def connect(self, wait: bool = True):
+        """建立连接"""
+        try:
+            print(f"\n=== BitgetClient {self.inst_type.value} 开始连接 ===")
+            
+            # 启动公共和私有WebSocket连接
+            def start_connections():
+                print(f"[BitgetClient] {self.inst_type.value} 开始连接WebSocket...")
+                self._public_ws.connect()
+                self._private_ws.connect()
+                
+            # 如果不等待，就在后台线程中连接
+            if not wait:
+                threading.Thread(
+                    target=start_connections,
+                    name=f"WebSocket-{self.inst_type.value}-Connect-{id(self)}",
+                    daemon=True
+                ).start()
+                return True
+                
+            # 否则在当前线程中连接
+            start_connections()
+            return True
+            
+        except Exception as e:
+            self.logger.error("WebSocket连接失败", exc_info=e)
+            self._handle_error("connection", str(e))
+            return False
+
+    def disconnect(self) -> bool:
+        """断开连接"""
+        try:
+            # 先断开私有WebSocket
+            if self._private_ws:
+                self._private_ws.disconnect()
+                print(f"[BitgetClient] {self.inst_type.value} 断开私有WebSocket")
+            
+            # 再断开公共WebSocket
+            if self._public_ws:
+                self._public_ws.disconnect()
+                print(f"[BitgetClient] {self.inst_type.value} 断开公共WebSocket")
+            
+            # 更新状态
+            self._connected = False
+            print(f"[BitgetClient] {self.inst_type.value} 连接已断开")
+            return True
+        except Exception as e:
+            print(f"[BitgetClient] {self.inst_type.value} 断开连接失败: {e}")
+            return False
 
     def _load_valid_pair(self):
         """加载所有有效的交易对"""
@@ -142,68 +262,14 @@ class BitgetClient(BaseClient):
         except Exception as e:
             print(f"[BitgetClient] 加载交易对失败: {e}")
 
-    def _handle_private_connected(self):
-        """处理私有WS连接成功"""
-        print("=== 私有WebSocket连接成功 ===")
-        print(f"Current connection status: public={self._public_ws.is_connected}, private={self._private_ws.is_connected}")
-        self._check_connection_status()
-        # 发送私有WebSocket连接成功信号
-        self.private_ws_connected.emit()
-
-    def _connect_signals(self):
-        """连接WebSocket信号"""
-        print("[BitgetClient] Connecting public WebSocket signals")
-        self._public_ws.message_received.connect(self._handle_public_message)
-        self._public_ws.error.connect(lambda e: self._handle_error("ws_public", e))
-        self._public_ws.connected.connect(self._handle_public_connected)
-        self._public_ws.disconnected.connect(self._handle_public_disconnected)
-
-        print("[BitgetClient] Connecting private WebSocket signals")
-        self._private_ws.message_received.connect(self._handle_private_message)
-        self._private_ws.error.connect(lambda e: self._handle_error("ws_private", e))
-        self._private_ws.connected.connect(self._handle_private_connected)  # 更改为新的处理方法
-        self._private_ws.disconnected.connect(self._handle_private_disconnected)
-
-    def _handle_public_connected(self):
-        """处理公共WS连接成功"""
-        print("=== 公共WebSocket连接成功 ===")
-        print(f"Current connection status: public={self._public_ws.is_connected}, private={self._private_ws.is_connected}")
-        self._check_connection_status()
-
-    def _handle_private_connected(self):
-        """处理私有WS连接成功"""
-        # print("=== 私有WebSocket连接成功 ===")
-        # print(f"Current connection status: public={self._public_ws.is_connected}, private={self._private_ws.is_connected}")
-        self._check_connection_status()
-
-    def _handle_public_disconnected(self):
-        """处理公共WS断开连接"""
-        # print("=== Public WebSocket Disconnected ===")
-        # print(f"Current connection status: public={self._public_ws.is_connected}, private={self._private_ws.is_connected}")
-        self._check_connection_status()
-
-    def _handle_private_disconnected(self):
-        """处理私有WS断开连接"""
-        # print("=== Private WebSocket Disconnected ===")
-        # print(f"Current connection status: public={self._public_ws.is_connected}, private={self._private_ws.is_connected}")
-        self._check_connection_status()
-
-    def _check_connection_status(self):
-        """检查连接状态"""
-        current_status = self.is_connected
-        if self._connected != current_status:
-            print(f"[BitgetClient] === 连接状态变化 ===")
-            print(f"[BitgetClient] 之前状态: {self._connected}")
-            print(f"[BitgetClient] 当前状态: {current_status}")
-            
-            self._connected = current_status
-            # 发送状态变化信号
-            if current_status:
-                self.connected.emit()
-            else:
-                self.disconnected.emit()
-            self.connection_status.emit(current_status)
-            print("[BitgetClient] Emitted connection_status signal")
+    def _handle_error(self, error_type: str, error_message: str):
+        """处理错误"""
+        print(f"[BitgetClient] Error ({error_type}): {error_message}")
+        self.error_occurred.emit(f"{error_type} error: {error_message}")
+        
+        # 连接错误时更新状态
+        if error_type in ['ws_public', 'ws_private']:
+            self._check_connection_status()
 
     def check_pair_valid(self, pair: str) -> bool:
         """检查交易对是否有效"""
@@ -227,9 +293,27 @@ class BitgetClient(BaseClient):
         except Exception as e:
             print(f"[BitgetClient] 处理消息错误: {e}")
 
+    def _handle_private_connected(self):
+        """处理私有WS连接成功"""
+        print("[BitgetClient] 私有WebSocket连接成功")
+        # 连接成功时不发送状态更新，等待登录成功后再发送
+        self._check_connection_status()
+
     def _handle_private_message(self, message: dict):
         """处理私有WebSocket消息"""
         print(f"收到私有消息: {message}")
+        
+        # 处理登录响应
+        if message.get("event") == "login" and message.get("code") == 0:
+            print("[BitgetClient] 私有WebSocket登录成功")
+            self._private_ws._login_status = True  # 设置登录状态
+            # 更新私有WebSocket状态
+            ws_status = self.get_ws_status()
+            self.ws_status_changed.emit(False, ws_status["private"])
+            self._check_connection_status()
+            return
+            
+        # 处理订单消息
         if message.get("channel") == "orders":
             order_data = message.get("data")
             if order_data:
@@ -250,64 +334,13 @@ class BitgetClient(BaseClient):
             except Exception as e:
                 print(f"重新订阅失败 {pair} - {channel}: {str(e)}")
 
-    def connect(self, wait: bool = True):
-        """建立连接
-        Args:
-            wait: 是否等待连接完成
-        """
-        try:
-            print(f"\n=== BitgetClient 开始连接 ===")
-            
-            # 启动公共和私有WebSocket连接
-            def start_connections():
-                print(f"[BitgetClient] 开始连接WebSocket...")
-                self._public_ws.connect()
-                self._private_ws.connect()
-                
-            # 如果不等待，就在后台线程中连接
-            if not wait:
-                threading.Thread(
-                    target=start_connections,
-                    name=f"WebSocket-Connect-{id(self)}",
-                    daemon=True
-                ).start()
-                return True
-                
-            # 否则在当前线程中连接
-            start_connections()
-            return True
-            
-        except Exception as e:
-            self.logger.error("WebSocket连接失败", exc_info=e)
-            self._handle_error("connection", str(e))
-            return False
-
-    def disconnect(self) -> bool:
-        """断开连接"""
-        # print("[BitgetClient] BitgetClient开始断开连接")
-        # try:
-        # 先断开私有WebSocket
-        if self._private_ws:
-            self._private_ws.disconnect()
-            print("[BitgetClient] 断开私有WebSocket")
-        
-        # 再断开公共WebSocket
-        if self._public_ws:
-            self._public_ws.disconnect()
-            print("[BitgetClient] 断开公共WebSocket")
-        
-        # 更新状态
-        self._connected = False
-        print("[BitgetClient] BitgetClient连接已断开")
-        return True
-
     def get_ws_status(self) -> Dict[str, bool]:
         status = {
             "public": (self._public_ws and self._public_ws.is_connected),
             "private": (self._private_ws and self._private_ws.is_connected 
                         and getattr(self._private_ws, '_login_status', False))
         }
-        print(f"[BitgetClient] Current WS Status - public: {status['public']}, private: {status['private']}")
+        # print(f"[BitgetClient] Current WS Status - public: {status['public']}, private: {status['private']}")
         return status
 
     def subscribe_pair(self, pair: str, channels: List[str], strategy_uid: str) -> bool:

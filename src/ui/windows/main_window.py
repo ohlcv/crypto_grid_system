@@ -8,7 +8,8 @@ from qtpy.QtWidgets import (
 from qtpy.QtCore import Qt
 from qtpy.QtGui import QIcon
 from src.exchange.base_client import ExchangeType
-from src.ui.tabs.grid_strategy_tab import GridStrategyTab
+from src.ui.grid.grid_strategy_tab import GridStrategyTab
+# from src.ui.tabs.grid_strategy_tab import GridStrategyTab
 from src.exchange.client_factory import ExchangeClientFactory
 from src.utils.common.common import resource_path
 from src.ui.components.welcome_page import WelcomePage
@@ -47,10 +48,6 @@ class MainWindow(QMainWindow):
         self.main_tab_widget = QTabWidget()
         layout.addWidget(self.main_tab_widget)
 
-        # 添加欢迎页面
-        welcome_widget = WelcomePage()
-        self.main_tab_widget.addTab(welcome_widget, "使用指南")
-
         # 创建网格策略标签页
         grid_strategy_widget = QWidget()
         grid_strategy_layout = QVBoxLayout(grid_strategy_widget)
@@ -61,22 +58,34 @@ class MainWindow(QMainWindow):
         
         # 添加现货网格标签页
         inst_type = ExchangeType.SPOT
-        if self.client_factory.get_supported_exchanges(inst_type):  # 检查是否有交易所支持现货
-            spot_tab = GridStrategyTab("SPOT", self.client_factory)
-            self.grid_tab_widget.addTab(spot_tab, "现货网格")
+        if self.client_factory.get_supported_exchanges(inst_type):
+            try:
+                self.spot_tab = GridStrategyTab("SPOT", self.client_factory)
+                self.grid_tab_widget.addTab(self.spot_tab, "现货网格")
+                print("✅ 现货网格标签页加载成功")
+                # 立即连接现货
+                QTimer.singleShot(100, self.spot_tab._auto_connect_exchange)
+            except Exception as e:
+                print(f"❌ 现货网格标签页加载失败: {str(e)}")
         
         # 将网格策略页面添加到主标签页
         self.main_tab_widget.addTab(grid_strategy_widget, "网格策略")
         
-        # 使用 QTimer 延迟 1 秒后添加合约网格标签页  
-        QTimer.singleShot(1000, self.add_futures_tab)
+        # 添加欢迎页面
+        welcome_widget = WelcomePage()
+        self.main_tab_widget.addTab(welcome_widget, "使用指南")
+        
+        # 延迟3秒后添加并连接合约网格标签页
+        # QTimer.singleShot(3000, self.add_futures_tab)
 
     def add_futures_tab(self):
-        """延迟 1 秒后添加合约网格标签页"""
+        """延迟添加合约网格标签页"""
         try:
-            futures_tab = GridStrategyTab("FUTURES", self.client_factory)
-            self.grid_tab_widget.addTab(futures_tab, "合约网格")
+            self.futures_tab = GridStrategyTab("FUTURES", self.client_factory)
+            self.grid_tab_widget.addTab(self.futures_tab, "合约网格")
             print("✅ 合约网格标签页加载成功")
+            # 添加完立即自动连接
+            self.futures_tab._auto_connect_exchange()
         except Exception as e:
             print(f"❌ 合约网格标签页加载失败: {str(e)}")
 

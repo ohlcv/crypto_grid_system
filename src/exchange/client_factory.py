@@ -153,15 +153,64 @@ class ExchangeClientFactory(QObject):
     client_created = Signal(object)
     client_error = Signal(str)
     validation_failed = Signal(str)
-    client_status_changed = Signal(str, str)
+    client_status_changed = Signal(str, str)  # 添加这个信号声明
 
     def __init__(self):
         super().__init__()
         self._clients: Dict[str, BaseClient] = {}
         self._client_threads: Dict[str, threading.Thread] = {}
         self._client_status: Dict[str, ClientStatus] = {}
+        self._validation_status: Dict[str, bool] = {}  # 每个tab_id的验证状态
         self._lock = threading.Lock()
-        self.registry = ExchangeValidatorRegistry()  # 使用单例注册中心
+        self.registry = ExchangeValidatorRegistry()
+
+    def _run_client(self, client: BaseClient, tab_id: str):
+        try:
+            # 更新状态为连接中
+            self._update_status(tab_id, ClientStatus.CONNECTING)
+            
+            # 连接客户端
+            client.connect()
+            
+            # 等待连接完成
+            max_wait = 10  
+            start = time.time()
+            while not client.is_connected:
+                time.sleep(0.1)
+                if time.time() - start > max_wait:
+                    raise TimeoutError("连接超时")
+            
+            # 等待WebSocket连接完成
+            time.sleep(1)  # 给WebSocket一些时间完成连接
+            
+            # 立即进行验证
+            self._update_status(tab_id, ClientStatus.VALIDATING)
+            validator = self.registry.get_validator(client.exchange)
+            if validator:
+                print(f"[ExchangeClientFactory] 开始验证 {client.inst_type.value} 账户")
+                if not validator.validate_account(client):
+                    self._update_status(tab_id, ClientStatus.FAILED)
+                    self.validation_failed.emit("账户验证失败，请使用邀请链接注册后再使用！")
+                    return
+                print(f"[ExchangeClientFactory] {client.inst_type.value} 账户验证成功")
+                self._validation_status[tab_id] = True
+                
+                # 验证成功后,更新WebSocket状态
+                ws_status = client.get_ws_status()
+                if hasattr(client, 'ws_status_changed'):
+                    client.ws_status_changed.emit(True, ws_status.get('public', False))
+                    client.ws_status_changed.emit(False, ws_status.get('private', False))
+                        
+            # 验证成功,更新状态为就绪        
+            self._update_status(tab_id, ClientStatus.READY)
+            self.client_created.emit(client)
+            
+        except Exception as e:
+            self._update_status(tab_id, ClientStatus.FAILED)
+            self.client_error.emit(str(e))
+        finally:
+            if self._client_status.get(tab_id) == ClientStatus.FAILED:
+                self.destroy_client(tab_id)
 
     def create_client(self, tab_id: str, exchange: str, api_config: dict, inst_type: ExchangeType) -> Optional[BaseClient]:
         try:
@@ -192,6 +241,14 @@ class ExchangeClientFactory(QObject):
                     lambda connected: self._handle_client_connected(tab_id, connected)
                 )
                 
+                # 添加 WebSocket 状态变化信号连接
+                if hasattr(client, 'ws_status_changed'):
+                    print(f"[ExchangeClientFactory] 连接WebSocket状态信号 - tab_id: {tab_id}")
+                    # 使用 lambda 捕获 tab_id
+                    client.ws_status_changed.connect(
+                        lambda is_public, connected, tid=tab_id: self._forward_ws_status_to_ui(tid, is_public, connected)
+                    )
+
                 # 启动连接线程
                 thread = threading.Thread(
                     target=self._run_client,
@@ -207,50 +264,16 @@ class ExchangeClientFactory(QObject):
         except Exception as e:
             self.client_error.emit(f"创建客户端失败: {str(e)}")
             return None
-            
-    def _run_client(self, client: BaseClient, tab_id: str):
-        try:
-            # 添加状态跟踪防止重复验证
-            self._validation_attempted = False
-            
-            # 更新状态为连接中
-            self._update_status(tab_id, ClientStatus.CONNECTING)
-            
-            # 连接客户端
-            client.connect()
-            
-            # 等待连接完成
-            max_wait = 10  
-            start = time.time()
-            while not client.is_connected:
-                time.sleep(0.1)
-                if time.time() - start > max_wait:
-                    raise TimeoutError("连接超时")
-            
-            # 只验证一次
-            if not self._validation_attempted:
-                self._validation_attempted = True
-                self._update_status(tab_id, ClientStatus.VALIDATING)
-                validator = self.registry.get_validator(client.exchange)
-                if validator:
-                    if not validator.validate_account(client):
-                        self._update_status(tab_id, ClientStatus.FAILED) 
-                        # 只发送一次验证失败消息
-                        self.validation_failed.emit("账户验证失败，请使用邀请链接注册后再使用！")
-                        return
-                        
-            # 验证成功,更新状态为就绪        
-            self._update_status(tab_id, ClientStatus.READY)
-            self.client_created.emit(client)
-            
-        except Exception as e:
-            if not self._validation_attempted:  # 确保错误消息也只发送一次
-                self._update_status(tab_id, ClientStatus.FAILED)
-                self.client_error.emit(str(e))
-        finally:
-            if self._client_status.get(tab_id) == ClientStatus.FAILED:
-                self.destroy_client(tab_id)
-            
+
+    def _forward_ws_status_to_ui(self, tab_id: str, is_public: bool, connected: bool):
+        """转发 WebSocket 状态到 UI"""
+        print(f"[ExchangeClientFactory] 转发WebSocket状态 - tab_id: {tab_id}, {'公有' if is_public else '私有'}: {'已连接' if connected else '未连接'}")
+        
+        # 获取特定的客户端
+        client = self._clients.get(tab_id)
+        if client and hasattr(client, 'api_manager'):
+            client.api_manager.update_ws_status(is_public, connected)
+
     def _update_status(self, tab_id: str, status: ClientStatus):
         """更新客户端状态"""
         with self._lock:

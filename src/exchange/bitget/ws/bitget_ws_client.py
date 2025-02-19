@@ -198,7 +198,7 @@ class BitgetWsClient:
             
         # 处理登录消息
         if "event" in json_obj and json_obj.get("event") == "login":
-            print(f"[BitgetWsClient] Login message: {message}")
+            # print(f"[BitgetWsClient] Login message: {message}")
             self.__login_status = json_obj.get("code") == 0
             return
 
