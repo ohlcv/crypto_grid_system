@@ -94,11 +94,18 @@ class StrategyManagerWrapper(QObject):
             del self._subscriptions[pair]
         print(f"[StrategyManagerWrapper] 当前订阅: {self._subscriptions}")
 
-    def create_strategy(self, pair: str, exchange: str, is_long: bool = True) -> Optional[str]:
+    def create_strategy(self, pair: str, exchange: str, is_long: bool = True, pair_data: dict = None) -> Optional[str]:
         """创建新策略"""
         try:
             # 创建唯一ID
             uid = str(uuid.uuid4())[:8]
+            
+            print(f"\n[StrategyManagerWrapper] === 创建策略 {uid} ===")
+            print(f"交易对: {pair}")
+            print(f"交易所: {exchange}")
+            print(f"方向: {'做多' if is_long else '做空'}")
+            if pair_data:
+                print(f"交易对参数: {pair_data}")
             
             # 创建策略
             grid_data = self.strategy_manager.create_strategy(
@@ -110,12 +117,40 @@ class StrategyManagerWrapper(QObject):
             
             if not grid_data:
                 raise ValueError("创建策略失败")
+
             # 设置方向 - 统一使用枚举
             grid_data.set_direction(
                 is_long=(self.inst_type == "SPOT" or is_long)
             )
+            
             # 初始化操作状态
             grid_data.row_dict["操作"] = {"开仓": True, "平仓": True}
+            
+            # 缓存交易对参数
+            if pair_data:
+                print("\n[StrategyManagerWrapper] === 缓存交易参数 ===")
+                if self.inst_type == "SPOT":
+                    grid_data.quantity_precision = int(pair_data.get('quantityPrecision', 4))
+                    grid_data.price_precision = int(pair_data.get('pricePrecision', 2))
+                    grid_data.min_trade_amount = Decimal(str(pair_data.get('minTradeAmount', '0')))
+                    grid_data.min_trade_value = Decimal(str(pair_data.get('minTradeUSDT', '5')))
+                    print(f"现货参数:")
+                    print(f"  数量精度: {grid_data.quantity_precision}")
+                    print(f"  价格精度: {grid_data.price_precision}")
+                    print(f"  最小数量: {grid_data.min_trade_amount}")
+                    print(f"  最小金额: {grid_data.min_trade_value}")
+                else:
+                    grid_data.quantity_precision = int(pair_data.get('volumePlace', 4))
+                    grid_data.price_precision = int(pair_data.get('pricePlace', 2))
+                    grid_data.min_trade_amount = Decimal(str(pair_data.get('minTradeNum', '0')))
+                    grid_data.min_trade_value = Decimal(str(pair_data.get('minTradeUSDT', '5')))
+                    print(f"合约参数:")
+                    print(f"  数量精度: {grid_data.quantity_precision}")
+                    print(f"  价格精度: {grid_data.price_precision}")
+                    print(f"  最小数量: {grid_data.min_trade_amount}")
+                    print(f"  最小金额: {grid_data.min_trade_value}")
+            else:
+                print("[StrategyManagerWrapper] 警告: 未提供交易对参数！")
             
             # 发送信号
             self.strategy_added.emit(uid)
@@ -124,7 +159,7 @@ class StrategyManagerWrapper(QObject):
             self.save_strategies(show_message=False)
             
             return uid
-            
+                
         except Exception as e:
             error_msg = f"创建策略失败: {str(e)}"
             print(f"[StrategyManagerWrapper] {error_msg}")
@@ -156,6 +191,17 @@ class StrategyManagerWrapper(QObject):
             print(f"[StrategyManagerWrapper] 订阅管理错误: {e}")
             print(f"[StrategyManagerWrapper] 错误详情: {traceback.format_exc()}")
             return False
+
+    def process_market_data(self, pair: str, data: dict):
+        """处理市场数据"""
+        try:
+            # 转发给策略管理器处理
+            self.strategy_manager.process_market_data(pair, data)
+        except Exception as e:
+            error_msg = f"处理市场数据失败: {str(e)}"
+            print(f"[StrategyManagerWrapper] {error_msg}")
+            print(f"[StrategyManagerWrapper] 错误详情: {traceback.format_exc()}")
+            self.strategy_error.emit("", error_msg)
 
     def start_strategy(self, uid: str, exchange_client: BaseClient) -> bool:
         try:

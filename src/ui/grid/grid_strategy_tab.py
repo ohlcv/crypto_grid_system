@@ -130,12 +130,17 @@ class GridStrategyTab(QWidget):
         
         # 处理 WebSocket 状态信号
         if hasattr(client, 'ws_status_changed'):
-            print(f"[GridStrategyTab] 连接WebSocket状态信号 - client: {client}")
+            # print(f"[GridStrategyTab] 连接WebSocket状态信号 - client: {client}")
             def handle_ws_status(is_public: bool, connected: bool):
                 print(f"[GridStrategyTab] 收到WebSocket状态更新 - {'公有' if is_public else '私有'}: {'已连接' if connected else '未连接'}")
                 self.api_manager.update_ws_status(is_public, connected)
             
             client.ws_status_changed.connect(handle_ws_status)
+            
+        # 连接市场数据处理
+        client.tick_received.connect(
+            lambda pair, data: self.strategy_wrapper.process_market_data(pair, data)
+        )
 
     @show_error_dialog
     def _handle_ws_status_changed(self, is_public: bool, connected: bool):
@@ -213,12 +218,12 @@ class GridStrategyTab(QWidget):
         self._handle_api_config_updated(self.api_manager.get_current_config())
 
     @show_error_dialog
-    def _handle_pair_added(self, symbol: str, base: str):
+    def _handle_pair_added(self, symbol: str, base: str, pair_data: dict):
         """处理添加交易对请求"""
         # 检查客户端状态
         if not self.check_client_status():
             return
-            
+                
         # 构建交易对
         pair = f"{symbol}/{base}"
         
@@ -227,12 +232,12 @@ class GridStrategyTab(QWidget):
         uid = self.strategy_wrapper.create_strategy(
             pair,
             self.api_manager.current_exchange.lower(),
-            is_long
+            is_long,
+            pair_data  # 传递交易对参数
         )
 
         if uid:
             grid_data = self.strategy_wrapper.get_strategy_data(uid)
-            print(f"[GridStrategyTab] 获取策略数据: {grid_data}")  # 添加此行
             if grid_data:
                 self.show_message("添加成功", f"交易对 {pair} 添加成功！")
 

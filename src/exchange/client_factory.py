@@ -40,7 +40,7 @@ class BitgetValidator:
     def validate_account(self, client: BaseClient) -> bool:
         try:
             response = client.rest_api.get_account_info()
-            print(f"[BitgetValidator] 获取账户信息响应: {response}")
+            # print(f"[BitgetValidator] 获取账户信息响应: {response}")
             if response.get('code') == '00000':
                 data = response.get('data', {})
                 user_id = data.get('userId')
@@ -267,7 +267,7 @@ class ExchangeClientFactory(QObject):
 
     def _forward_ws_status_to_ui(self, tab_id: str, is_public: bool, connected: bool):
         """转发 WebSocket 状态到 UI"""
-        print(f"[ExchangeClientFactory] 转发WebSocket状态 - tab_id: {tab_id}, {'公有' if is_public else '私有'}: {'已连接' if connected else '未连接'}")
+        # print(f"[ExchangeClientFactory] 转发WebSocket状态 - tab_id: {tab_id}, {'公有' if is_public else '私有'}: {'已连接' if connected else '未连接'}")
         
         # 获取特定的客户端
         client = self._clients.get(tab_id)

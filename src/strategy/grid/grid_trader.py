@@ -579,7 +579,7 @@ class GridTrader(QObject):
             self.logger.info("not fills_data")
             return None
                 
-        self.logger.info(f"fills_data: {fills_data}")
+        # self.logger.info(f"fills_data: {fills_data}")
         
         for fill in fills_data:
             try:
@@ -712,7 +712,7 @@ class GridTrader(QObject):
                 side="buy" if is_long else "sell",
                 client_oid=client_order_id
             )
-            self.trade_logger.info(f"[GridTrader] 下单结果 - {self.grid_data.uid} - {response}")
+            # self.trade_logger.info(f"[GridTrader] 下单结果 - {self.grid_data.uid} - {response}")
 
             # 处理下单响应
             if isinstance(response, dict) and response.get('code') == '00000':
@@ -726,7 +726,7 @@ class GridTrader(QObject):
                     symbol=self.grid_data.pair.replace('/', ''),
                     order_id=order_id
                 )
-                self.logger.info(f"[GridTrader] 成交明细响应: {fills}")
+                # self.logger.info(f"[GridTrader] 成交明细响应: {fills}")
 
                 if isinstance(fills, dict) and fills.get('code') == '00000':
                     # 获取成交列表

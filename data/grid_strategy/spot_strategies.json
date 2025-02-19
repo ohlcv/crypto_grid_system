@@ -1,5 +1,62 @@
 {
     "inst_type": "SPOT",
-    "strategies": {},
-    "running_strategies": []
+    "strategies": {
+        "d76c8b87": {
+            "uid": "d76c8b87",
+            "pair": "TRUMP/USDT",
+            "exchange": "bitget",
+            "inst_type": "SPOT",
+            "direction": "LONG",
+            "take_profit_config": {
+                "enabled": false,
+                "profit_amount": null
+            },
+            "stop_loss_config": {
+                "enabled": false,
+                "loss_amount": null
+            },
+            "total_realized_profit": 0.0,
+            "grid_levels": {
+                "0": {
+                    "间隔%": 1.0,
+                    "开仓反弹%": 0.1,
+                    "平仓反弹%": 0.1,
+                    "止盈%": 1.0,
+                    "成交额": 6.0,
+                    "成交量": 0.35,
+                    "开仓价": 16.906,
+                    "开仓时间": "2025-02-20T02:04:59.154589",
+                    "已开仓": true,
+                    "order_id": "1276168901139046408"
+                }
+            },
+            "row_dict": {
+                "交易所": "bitget",
+                "交易对": "TRUMP/USDT",
+                "方向": "LONG",
+                "操作": {
+                    "开仓": true,
+                    "平仓": true
+                },
+                "运行状态": "运行中",
+                "当前层数": "1/1",
+                "持仓价值": "5.89",
+                "持仓盈亏": "-0.0273",
+                "持仓均价": "16.9060",
+                "最后价格": "16.828",
+                "尾单价格": "16.906",
+                "开仓触发价": "未定义",
+                "止盈触发价": "17.07506",
+                "实现盈亏": "0.0",
+                "总体止盈": "-",
+                "总体止损": "-",
+                "最后时间": "02:14:42",
+                "时间戳": 1739988882499,
+                "标识符": "d76c8b87"
+            }
+        }
+    },
+    "running_strategies": [
+        "d76c8b87"
+    ]
 }

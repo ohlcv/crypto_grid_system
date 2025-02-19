@@ -203,6 +203,20 @@ class GridTable(QTableWidget):
                             # 设置运行状态列的颜色
                             if col_name == "运行状态":
                                 self._set_status_color(item, str(value))
+                            # 设置浮点数精度
+                            elif col_name in ["最后价格", "开仓触发价", "止盈触发价", "尾单价格", "持仓均价"]:
+                                try:
+                                    value = float(value)
+                                    item.setText(f"{value:.4f}")
+                                except (ValueError, TypeError):
+                                    pass
+                            # 处理金额显示
+                            elif col_name in ["持仓价值", "持仓盈亏", "实现盈亏"]:
+                                try:
+                                    value = float(value)
+                                    item.setText(f"{value:.2f}")
+                                except (ValueError, TypeError):
+                                    pass
                                 
                             self.setItem(row, self.get_column_index(col_name), item)
                     break

@@ -12,7 +12,7 @@ class GridControls(QWidget):
     """网格策略控制组件"""
     
     # 信号定义
-    pair_added = Signal(str, str)  # symbol, base_currency
+    pair_added = Signal(str, str, object)  # symbol, base, pair_data
     stop_all_requested = Signal()
     operation_toggled = Signal(str, bool)  # operation_type, enabled
     position_mode_changed = Signal(bool)  # is_long
@@ -132,6 +132,7 @@ class GridControls(QWidget):
         # 发送信号通知模式变化
         self.position_mode_changed.emit(not self.position_mode_button.isChecked())
 
+    # @show_error_dialog
     def _handle_add_pair(self):
         """处理添加交易对请求"""
         symbol = self.input_symbol.text().strip().upper()
@@ -148,13 +149,27 @@ class GridControls(QWidget):
         pair = f"{symbol}/{base}"
         
         try:
-            result = self.client.validate_pair(pair)
-            if not result.get("valid", False):
-                self.dialog_requested.emit("warning", "错误", 
-                    result.get("error", "验证交易对失败"))
-                return
+            # 使用rest api验证交易对
+            symbol_normalized = pair.replace('/', '')
+            pair_info = self.client.rest_api.get_pairs(symbol=symbol_normalized)
+            
+            if pair_info.get('code') != '00000':
+                raise ValueError(f"验证交易对失败: {pair_info.get('msg')}")
                 
-            self.pair_added.emit(symbol, base)
+            # 验证交易对是否在返回结果中
+            pair_exists = False
+            pair_data = None
+            for p in pair_info.get('data', []):
+                if p['symbol'] == symbol_normalized:
+                    pair_exists = True
+                    pair_data = p
+                    break
+                    
+            if not pair_exists:
+                raise ValueError(f"交易对 {pair} 不存在")
+
+            # 发送验证参数
+            self.pair_added.emit(symbol, base, pair_data)  # 修改此处,传递pair_data
             self.input_symbol.clear()
             
         except Exception as e:
