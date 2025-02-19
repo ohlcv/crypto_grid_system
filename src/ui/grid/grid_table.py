@@ -23,6 +23,7 @@ class GridTable(QTableWidget):
     strategy_delete_requested = Signal(str)     # uid
     strategy_close_requested = Signal(str)      # uid
     strategy_refresh_requested = Signal(str)    # uid
+    dialog_requested = Signal(str, str, str)
     
     # 表格列定义
     COLUMN_DEFINITIONS = [
@@ -236,30 +237,71 @@ class GridTable(QTableWidget):
             return
         uid = uid_item.text()
         
+        # 获取策略状态
+        status = self.get_strategy_status(uid)
+        if not status:
+            return
+            
         menu = QMenu(self)
         
         # 基础操作
         menu.addAction("设置网格", lambda: self.strategy_setting_requested.emit(uid))
         
         # 根据策略状态添加启动/停止选项
-        status_item = self.item(row, self.get_column_index("运行状态"))
-        if status_item and status_item.text() == "运行中":
+        if status == "运行中":
             menu.addAction("停止策略", lambda: self.strategy_stop_requested.emit(uid))
         else:
             menu.addAction("启动策略", lambda: self.strategy_start_requested.emit(uid))
 
         menu.addSeparator()
-        menu.addAction("平仓", lambda: self.strategy_close_requested.emit(uid))
-
+        
+        # 只有在策略已停止时才允许平仓
+        if status != "运行中":
+            menu.addAction("平仓", lambda: self._handle_close_strategy(uid))
+        
         # 添加刷新按钮
         menu.addSeparator()
         menu.addAction("刷新数据", lambda: self.strategy_refresh_requested.emit(uid))
 
-        # 删除选项始终可用
+        # 删除选项需要确认
         menu.addSeparator()
-        menu.addAction("删除", lambda: self.strategy_delete_requested.emit(uid))
+        menu.addAction("删除", lambda: self._handle_delete_strategy(uid, status))
         
         menu.exec(self.mapToGlobal(position))
+
+    def _handle_delete_strategy(self, uid: str, status: str):
+        """处理删除策略请求"""
+        try:
+            # 检查运行状态
+            if status == "运行中":
+                self.dialog_requested.emit("warning", "警告", "请先停止策略再删除！")
+                return
+                
+            # 获取策略数据
+            grid_data = self.strategy_wrapper.get_strategy_data(uid)
+            if not grid_data:
+                self.dialog_requested.emit("error", "错误", "策略数据不存在！")
+                return
+                
+            # 检查是否有持仓
+            position_value = grid_data.row_dict.get("持仓价值", "0")
+            if position_value and float(position_value.replace(",", "")) > 0:
+                self.dialog_requested.emit("warning", "警告", "策略仍有持仓，请先平仓后再删除！")
+                return
+                
+            # 发送删除请求
+            self.strategy_delete_requested.emit(uid)
+        except Exception as e:
+            self.dialog_requested.emit("error", "错误", f"删除策略失败: {str(e)}")
+
+    def _handle_close_strategy(self, uid: str):
+        """处理平仓请求"""
+        status = self.get_strategy_status(uid)
+        if status == "运行中":
+            self.dialog_requested.emit("warning", "警告", "请先停止策略再进行平仓！")
+            return
+            
+        self.strategy_close_requested.emit(uid)
 
     def get_strategy_uids(self) -> List[str]:
         """获取所有策略ID"""

@@ -16,11 +16,17 @@ class GridControls(QWidget):
     stop_all_requested = Signal()
     operation_toggled = Signal(str, bool)  # operation_type, enabled
     position_mode_changed = Signal(bool)  # is_long
+    dialog_requested = Signal(str, str, str)
 
     def __init__(self, inst_type: str):
         super().__init__()
         self.inst_type = inst_type
+        self.client = None
         self.setup_ui()
+
+    def set_client(self, client):
+        """设置交易所客户端"""
+        self.client = client
 
     def setup_ui(self):
         """设置UI界面"""
@@ -117,7 +123,7 @@ class GridControls(QWidget):
         # 现货模式下禁止切换到做空
         if self.inst_type == "SPOT" and self.position_mode_button.isChecked():
             self.position_mode_button.setChecked(False)
-            QMessageBox.warning(self, "警告", "现货模式不支持做空")
+            self.dialog_requested.emit("warning", "警告", "现货模式不支持做空")
             return
             
         # 更新按钮样式
@@ -132,14 +138,28 @@ class GridControls(QWidget):
         base = self.input_base.text().strip().upper()
         
         if not symbol or not base:
-            QMessageBox.warning(self, "错误", "交易对和基础货币不能为空！")
+            self.dialog_requested.emit("warning", "错误", "交易对和基础货币不能为空！")
+            return
+
+        if not self.client:
+            self.dialog_requested.emit("warning", "错误", "交易所客户端未连接！")
             return
             
-        # 发送信号
-        self.pair_added.emit(symbol, base)
+        pair = f"{symbol}/{base}"
         
-        # 清空输入
-        self.input_symbol.clear()
+        try:
+            result = self.client.validate_pair(pair)
+            if not result.get("valid", False):
+                self.dialog_requested.emit("warning", "错误", 
+                    result.get("error", "验证交易对失败"))
+                return
+                
+            self.pair_added.emit(symbol, base)
+            self.input_symbol.clear()
+            
+        except Exception as e:
+            self.dialog_requested.emit("error", "错误", f"验证交易对失败: {str(e)}")
+            return
 
     def _handle_operation_toggled(self, operation_type: str):
         """处理开平仓操作切换"""

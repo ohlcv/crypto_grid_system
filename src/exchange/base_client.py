@@ -105,6 +105,26 @@ class BaseClient(QObject):
         """获取WebSocket状态"""
         raise NotImplementedError
 
+    def validate_pair(self, pair: str) -> dict:
+        """
+        验证交易对是否有效并返回其参数
+        
+        Args:
+            pair: 交易对名称 (例如: "BTC/USDT")
+            
+        Returns:
+            dict: {
+                "valid": bool,              # 是否有效
+                "normalized_pair": str,      # 标准化后的交易对名称
+                "quantity_precision": int,   # 数量精度
+                "price_precision": int,      # 价格精度
+                "min_quantity": str,         # 最小数量
+                "min_amount": str,          # 最小金额
+                "error": str                # 错误信息(如果有)
+            }
+        """
+        raise NotImplementedError
+
     def subscribe_pair(self, symbol: str, channels: List[str]) -> bool:
         """
         订阅交易对的指定数据类型

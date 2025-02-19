@@ -19,6 +19,17 @@ from src.ui.grid.strategy_manager_wrapper import StrategyManagerWrapper
 from src.ui.grid.grid_settings_aidlog import GridDialog
 
 
+def show_error_dialog(func):
+    """装饰器: 捕获并显示函数执行期间的错误"""
+    def wrapper(self, *args, **kwargs):
+        try:
+            return func(self, *args, **kwargs)
+        except Exception as e:
+            error_msg = f"操作出错: {str(e)}\n\n详细信息:\n{traceback.format_exc()}"
+            print(f"[GridStrategyTab] {error_msg}")
+            self.show_dialog("error", "错误", error_msg)
+    return wrapper
+
 class GridStrategyTab(QWidget):
     """网格策略Tab页 - 重构后的主类实现"""
     
@@ -68,6 +79,7 @@ class GridStrategyTab(QWidget):
         
         self.setLayout(layout)
 
+    @show_error_dialog
     def _connect_signals(self):
         """连接所有组件信号"""
         # API配置管理器信号
@@ -80,6 +92,7 @@ class GridStrategyTab(QWidget):
         self.grid_controls.stop_all_requested.connect(self._handle_stop_all_requested)
         self.grid_controls.operation_toggled.connect(self._handle_operation_toggled)
         self.grid_controls.position_mode_changed.connect(self._handle_position_mode_changed)
+        self.grid_controls.dialog_requested.connect(lambda type, title, msg: self.show_dialog(type, title, msg))
         
         # 表格信号
         self.grid_table.strategy_setting_requested.connect(self._handle_strategy_setting)
@@ -88,6 +101,7 @@ class GridStrategyTab(QWidget):
         self.grid_table.strategy_delete_requested.connect(self._handle_strategy_delete)
         self.grid_table.strategy_close_requested.connect(self._handle_strategy_close)
         self.grid_table.strategy_refresh_requested.connect(self._handle_strategy_refresh)
+        self.grid_table.dialog_requested.connect(lambda type, title, msg: self.show_dialog(type, title, msg))
         
         # 策略管理器信号
         self.strategy_wrapper.strategy_added.connect(self._handle_strategy_added)
@@ -101,27 +115,35 @@ class GridStrategyTab(QWidget):
         self.client_factory.client_status_changed.connect(self._handle_client_status_changed)
         self.client_factory.client_created.connect(self._handle_client_created)
 
+    @show_error_dialog
     def _handle_client_status_changed(self, tab_id: str, status: str):
         """处理客户端状态变化"""
         if tab_id == self.tab_id:
             self.api_manager.update_connection_status(status)
 
+    @show_error_dialog
     def _handle_client_created(self, client: BaseClient):
         """处理客户端创建完成"""
+        # 设置客户端到 grid_controls
+        self.grid_controls.set_client(client)
+        self.exchange_client = client
+        
+        # 处理 WebSocket 状态信号
         if hasattr(client, 'ws_status_changed'):
             print(f"[GridStrategyTab] 连接WebSocket状态信号 - client: {client}")
-            # 修改信号连接方式
             def handle_ws_status(is_public: bool, connected: bool):
                 print(f"[GridStrategyTab] 收到WebSocket状态更新 - {'公有' if is_public else '私有'}: {'已连接' if connected else '未连接'}")
                 self.api_manager.update_ws_status(is_public, connected)
             
             client.ws_status_changed.connect(handle_ws_status)
 
+    @show_error_dialog
     def _handle_ws_status_changed(self, is_public: bool, connected: bool):
         """处理WebSocket状态变化"""
         print(f"[GridStrategyTab] WebSocket状态变化 - {'公有' if is_public else '私有'}: {'已连接' if connected else '未连接'}")
         self.api_manager.update_ws_status(is_public, connected)
 
+    @show_error_dialog
     def _auto_connect_exchange(self):
         """自动连接默认交易所"""
         try:
@@ -150,6 +172,7 @@ class GridStrategyTab(QWidget):
             print(f"[GridStrategyTab] 自动连接交易所失败: {e}")
             print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
 
+    @show_error_dialog
     def _handle_api_config_updated(self, config: dict):
         """处理API配置更新"""
         try:
@@ -179,6 +202,7 @@ class GridStrategyTab(QWidget):
         except Exception as e:
             self.show_error_message(f"更新API配置失败: {str(e)}")
 
+    @show_error_dialog
     def _handle_exchange_changed(self, new_exchange: str):
         """处理交易所切换"""
         if self.strategy_wrapper.has_running_strategies():
@@ -188,6 +212,7 @@ class GridStrategyTab(QWidget):
         # 更新交易所客户端
         self._handle_api_config_updated(self.api_manager.get_current_config())
 
+    @show_error_dialog
     def _handle_pair_added(self, symbol: str, base: str):
         """处理添加交易对请求"""
         # 检查客户端状态
@@ -211,6 +236,7 @@ class GridStrategyTab(QWidget):
             if grid_data:
                 self.show_message("添加成功", f"交易对 {pair} 添加成功！")
 
+    @show_error_dialog
     def _handle_stop_all_requested(self):
         """处理停止所有策略请求"""
         if not self.check_client_status():
@@ -228,6 +254,7 @@ class GridStrategyTab(QWidget):
             success_count, total = self.strategy_wrapper.stop_all_strategies(self.exchange_client)
             self.show_message("操作完成", f"成功停止 {success_count}/{total} 个策略")
 
+    @show_error_dialog
     def _handle_operation_toggled(self, operation_type: str, enabled: bool):
         """处理开平仓操作状态切换"""
         # 更新表格中所有策略的操作状态
@@ -236,6 +263,7 @@ class GridStrategyTab(QWidget):
         # 保存策略数据
         self.strategy_wrapper.save_strategies(show_message=False)
 
+    @show_error_dialog
     def _handle_position_mode_changed(self, is_long: bool):
         """处理持仓模式切换"""
         pass
@@ -244,6 +272,7 @@ class GridStrategyTab(QWidget):
         #     self.grid_controls.reset_position_mode()
         #     return
 
+    @show_error_dialog
     def _handle_strategy_setting(self, uid: str):
         """处理策略设置请求"""
         grid_data = self.strategy_wrapper.get_strategy_data(uid)
@@ -254,6 +283,7 @@ class GridStrategyTab(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.strategy_wrapper.save_strategies(show_message=False)
 
+    @show_error_dialog
     def _handle_strategy_start(self, uid: str):
         """处理启动策略请求"""
         if not self.check_client_status():
@@ -262,6 +292,7 @@ class GridStrategyTab(QWidget):
         if self.strategy_wrapper.start_strategy(uid, self.exchange_client):
             self.show_message("启动成功", "策略已启动！")
 
+    @show_error_dialog
     def _handle_strategy_stop(self, uid: str):
         """处理停止策略请求"""
         if not self.check_client_status():
@@ -270,6 +301,7 @@ class GridStrategyTab(QWidget):
         if self.strategy_wrapper.stop_strategy(uid, self.exchange_client):
             self.show_message("停止成功", "策略已停止！")
 
+    @show_error_dialog
     def _handle_strategy_delete(self, uid: str):
         """处理删除策略请求"""
         reply = QMessageBox.question(
@@ -284,6 +316,7 @@ class GridStrategyTab(QWidget):
                 self.grid_table.remove_strategy(uid)
                 self.show_message("删除成功", "策略已删除！")
 
+    @show_error_dialog
     def _handle_strategy_close(self, uid: str):
         """处理策略平仓请求"""
         if not self.check_client_status():
@@ -311,6 +344,7 @@ class GridStrategyTab(QWidget):
             if self.strategy_wrapper.close_position(uid, self.exchange_client):
                 self.show_message("平仓成功", "策略持仓已平仓！")
 
+    @show_error_dialog
     def _handle_strategy_refresh(self, uid: str):
         """处理策略数据刷新请求"""
         grid_data = self.strategy_wrapper.get_strategy_data(uid)
@@ -332,22 +366,26 @@ class GridStrategyTab(QWidget):
         
         self.show_message("数据已刷新", info_text)
 
+    @show_error_dialog
     def _handle_strategy_added(self, uid: str):
         """处理策略添加事件"""
         grid_data = self.strategy_wrapper.get_strategy_data(uid)
         if grid_data:
             self.grid_table.add_strategy_row(grid_data)
 
+    @show_error_dialog
     def _handle_strategy_deleted(self, uid: str):
         """处理策略删除事件"""
         self.grid_table.remove_strategy(uid)
 
+    @show_error_dialog
     def _handle_strategy_updated(self, uid: str):
         """处理策略更新事件"""
         grid_data = self.strategy_wrapper.get_strategy_data(uid)
         if grid_data:
             self.grid_table.update_strategy_row(uid, grid_data)
 
+    @show_error_dialog
     def _handle_strategy_error(self, uid: str, error_msg: str):
         """处理策略错误事件"""
         self.show_error_message(error_msg)
@@ -357,6 +395,7 @@ class GridStrategyTab(QWidget):
                 self.strategy_wrapper.get_strategy_data(uid)
             )
 
+    @show_error_dialog
     def _handle_strategy_started(self, uid: str):
         """处理策略启动事件"""
         grid_data = self.strategy_wrapper.get_strategy_data(uid)
@@ -364,6 +403,7 @@ class GridStrategyTab(QWidget):
             grid_data.row_dict["运行状态"] = "运行中"
             self.grid_table.update_strategy_row(uid, grid_data)
 
+    @show_error_dialog
     def _handle_strategy_stopped(self, uid: str):
         """处理策略停止事件"""
         grid_data = self.strategy_wrapper.get_strategy_data(uid)
@@ -386,13 +426,39 @@ class GridStrategyTab(QWidget):
             
         return True
 
-    def show_message(self, title: str, message: str):
-        """显示信息对话框"""
-        QMessageBox.information(self, title, message)
-
     def show_error_message(self, message: str):
-        """显示错误对话框"""
-        QMessageBox.critical(self, "错误", message)
+        """显示错误消息对话框"""
+        return self.show_dialog("error", "错误", message)
+
+    def show_message(self, title: str, message: str):
+        """显示普通消息对话框"""
+        return self.show_dialog("info", title, message)
+
+    def show_dialog(self, dialog_type: str, title: str, message: str, 
+                   buttons=QMessageBox.StandardButton.Ok,
+                   default_button=QMessageBox.StandardButton.Ok) -> QMessageBox.StandardButton:
+        """统一的对话框显示管理
+        
+        Args:
+            dialog_type: 对话框类型 ("info", "warning", "error", "question")
+            title: 标题
+            message: 消息内容
+            buttons: 按钮选项
+            default_button: 默认按钮
+            
+        Returns:
+            用户点击的按钮
+        """
+        print(f"[GridStrategyTab] 显示对话框: {dialog_type}, 标题: {title}, 消息: {message}")
+        dialog_map = {
+            "info": QMessageBox.information,
+            "warning": QMessageBox.warning,
+            "error": QMessageBox.critical,
+            "question": QMessageBox.question
+        }
+        
+        dialog_func = dialog_map.get(dialog_type, QMessageBox.information)
+        return dialog_func(self, title, message, buttons, default_button)
 
     def closeEvent(self, event):
         """处理窗口关闭事件"""

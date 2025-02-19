@@ -312,7 +312,7 @@ class BitgetClient(BaseClient):
             self.ws_status_changed.emit(False, ws_status["private"])
             self._check_connection_status()
             return
-            
+
         # 处理订单消息
         if message.get("channel") == "orders":
             order_data = message.get("data")
@@ -342,6 +342,38 @@ class BitgetClient(BaseClient):
         }
         # print(f"[BitgetClient] Current WS Status - public: {status['public']}, private: {status['private']}")
         return status
+
+    def validate_pair(self, pair: str) -> dict:
+        """验证交易对"""
+        try:
+            # 标准化交易对格式
+            normalized_pair = pair.replace("/", "")
+            
+            # 调用API获取交易对信息
+            response = self.rest_api.get_pairs(normalized_pair)
+            
+            if response.get('code') == '00000':
+                data = response.get('data', {})
+                return {
+                    "valid": True,
+                    "normalized_pair": normalized_pair,
+                    "quantity_precision": int(data.get('quantityPrecision', 0)),
+                    "price_precision": int(data.get('pricePrecision', 0)),
+                    "min_quantity": data.get('minTradeAmount', '0'),
+                    "min_amount": data.get('minTradeUSDT', '0'),
+                    "error": None
+                }
+            else:
+                return {
+                    "valid": False,
+                    "error": f"交易对不存在或已下线: {pair}"
+                }
+                
+        except Exception as e:
+            return {
+                "valid": False,
+                "error": f"验证交易对失败: {str(e)}"
+            }
 
     def subscribe_pair(self, pair: str, channels: List[str], strategy_uid: str) -> bool:
         """订阅交易对"""
