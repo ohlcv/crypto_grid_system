@@ -195,6 +195,7 @@ class GridTrader(QObject):
         print(f"  运行标志: {self._running}")
         
         last_process_time = time.time()
+        last_price = None
         min_process_interval = 0.1  # 最小处理间隔（秒）
         
         while self._running and not self._stop_flag.is_set():
@@ -208,8 +209,10 @@ class GridTrader(QObject):
                     
                 if not self._order_state.pending_order_id:
                     current_price = self.grid_data.last_price
-                    if current_price:
+                    # 只在价格发生变化时处理
+                    if current_price and current_price != last_price:
                         self._process_price_update()
+                        last_price = current_price  # 更新上次处理的价格
                 
                 last_process_time = current_time
                 
@@ -218,8 +221,6 @@ class GridTrader(QObject):
                 print(f"[GridTrader] 错误详情: {traceback.format_exc()}")
                 break
 
-        # self.grid_data.row_dict["运行状态"] = "已停止" 
-        # self.grid_data.update_row_dict({"运行状态": "已停止"})
         print(f"[GridTrader] === 策略线程退出 ===")
         print(f"[GridTrader] 线程名称: {thread_name}")
         print(f"[GridTrader] 线程ID: {thread_id}")
@@ -801,8 +802,6 @@ class GridTrader(QObject):
         except Exception as e:
             error_msg = f"下单错误: {str(e)}"
             self.trade_logger.error(f"下单错误 - {self.grid_data.uid}", exc_info=e)
-            
-            # 不直接调用 handle_error，而是发出错误信号
             self.error_occurred.emit(self.grid_data.uid, error_msg)
             # 设置停止标志
             self._stop_flag.set()

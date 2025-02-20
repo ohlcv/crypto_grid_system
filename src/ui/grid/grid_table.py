@@ -186,40 +186,56 @@ class GridTable(QTableWidget):
     def update_strategy_row(self, uid: str, grid_data: GridData):
         """更新策略行数据"""
         try:
+            print(f"\n[GridTable] === 开始更新策略行 === {uid}")
+            print(f"[GridTable] 更新数据: {grid_data.row_dict}")
+            
             # 查找对应行
-            for row in range(self.rowCount()):
-                uid_item = self.item(row, self.get_column_index("标识符"))
+            row = -1
+            for i in range(self.rowCount()):
+                uid_item = self.item(i, self.get_column_index("标识符"))
                 if uid_item and uid_item.text() == uid:
-                    # 更新各列数据
-                    for col in self.COLUMN_DEFINITIONS:
-                        col_name = col["name"]
-                        if col_name == "操作":
-                            continue
-                        value = grid_data.row_dict.get(col_name)
-                        if value is not None:
-                            item = QTableWidgetItem(str(value))
-                            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                            
-                            # 设置运行状态列的颜色
-                            if col_name == "运行状态":
-                                self._set_status_color(item, str(value))
-                            # 设置浮点数精度
-                            elif col_name in ["最后价格", "开仓触发价", "止盈触发价", "尾单价格", "持仓均价"]:
-                                try:
-                                    value = float(value)
-                                    item.setText(f"{value:.4f}")
-                                except (ValueError, TypeError):
-                                    pass
-                            # 处理金额显示
-                            elif col_name in ["持仓价值", "持仓盈亏", "实现盈亏"]:
-                                try:
-                                    value = float(value)
-                                    item.setText(f"{value:.2f}")
-                                except (ValueError, TypeError):
-                                    pass
-                                
-                            self.setItem(row, self.get_column_index(col_name), item)
+                    row = i
                     break
+                    
+            if row == -1:
+                print(f"[GridTable] 未找到策略行: {uid}")
+                return
+                
+            print(f"[GridTable] 找到策略行: {row}")
+            
+            # 更新各列数据
+            for col in self.COLUMN_DEFINITIONS:
+                col_name = col["name"]
+                if col_name == "操作":
+                    continue
+                    
+                value = grid_data.row_dict.get(col_name)
+                if value is not None:
+                    print(f"[GridTable] 更新列 {col_name}: {value}")
+                    item = QTableWidgetItem(str(value))
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    
+                    # 设置运行状态列的颜色
+                    if col_name == "运行状态":
+                        self._set_status_color(item, str(value))
+                    # 设置浮点数精度
+                    elif col_name in ["最后价格", "开仓触发价", "止盈触发价", "尾单价格", "持仓均价"]:
+                        try:
+                            value = float(value)
+                            item.setText(f"{value:.4f}")
+                        except (ValueError, TypeError):
+                            pass
+                    # 处理金额显示
+                    elif col_name in ["持仓价值", "持仓盈亏", "实现盈亏"]:
+                        try:
+                            value = float(value)
+                            item.setText(f"{value:.2f}")
+                        except (ValueError, TypeError):
+                            pass
+                        
+                    self.setItem(row, self.get_column_index(col_name), item)
+
+            print(f"[GridTable] === 策略行更新完成 ===")
 
         except Exception as e:
             print(f"[GridTable] 更新策略行错误: {e}")

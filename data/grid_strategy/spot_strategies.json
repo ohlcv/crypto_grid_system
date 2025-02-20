@@ -8,12 +8,12 @@
             "inst_type": "SPOT",
             "direction": "LONG",
             "take_profit_config": {
-                "enabled": false,
-                "profit_amount": null
+                "enabled": true,
+                "profit_amount": 100.0
             },
             "stop_loss_config": {
-                "enabled": false,
-                "loss_amount": null
+                "enabled": true,
+                "loss_amount": 100.0
             },
             "total_realized_profit": 0.0,
             "grid_levels": {
@@ -28,35 +28,131 @@
                     "开仓时间": "2025-02-20T02:04:59.154589",
                     "已开仓": true,
                     "order_id": "1276168901139046408"
+                },
+                "1": {
+                    "间隔%": 1.0,
+                    "开仓反弹%": 0.1,
+                    "平仓反弹%": 0.1,
+                    "止盈%": 1.0,
+                    "成交额": 6.0,
+                    "成交量": null,
+                    "开仓价": null,
+                    "开仓时间": null,
+                    "已开仓": false,
+                    "order_id": null
                 }
             },
             "row_dict": {
                 "交易所": "bitget",
                 "交易对": "TRUMP/USDT",
+                "方向": "做多",
+                "操作": {
+                    "开仓": true,
+                    "平仓": true
+                },
+                "运行状态": "运行中",
+                "当前层数": "1/2",
+                "持仓价值": "5.88",
+                "持仓盈亏": "-0.0388",
+                "持仓均价": "16.9060",
+                "最后价格": "16.795",
+                "尾单价格": null,
+                "开仓触发价": "16.73694",
+                "止盈触发价": "17.07506",
+                "实现盈亏": "0.0",
+                "总体止盈": "100",
+                "总体止损": "100",
+                "最后时间": "16:46:20",
+                "时间戳": 1740041180498,
+                "标识符": "d76c8b87"
+            }
+        },
+        "903fce3c": {
+            "uid": "903fce3c",
+            "pair": "BTC/USDT",
+            "exchange": "bitget",
+            "inst_type": "SPOT",
+            "direction": "LONG",
+            "take_profit_config": {
+                "enabled": false,
+                "profit_amount": null
+            },
+            "stop_loss_config": {
+                "enabled": false,
+                "loss_amount": null
+            },
+            "total_realized_profit": 0.0,
+            "grid_levels": {},
+            "row_dict": {
+                "交易所": "bitget",
+                "交易对": "BTC/USDT",
                 "方向": "LONG",
                 "操作": {
                     "开仓": true,
                     "平仓": true
                 },
                 "运行状态": "运行中",
-                "当前层数": "1/1",
-                "持仓价值": "5.89",
-                "持仓盈亏": "-0.0273",
-                "持仓均价": "16.9060",
-                "最后价格": "16.828",
-                "尾单价格": "16.906",
-                "开仓触发价": "未定义",
-                "止盈触发价": "17.07506",
+                "当前层数": null,
+                "持仓价值": "0",
+                "持仓盈亏": "0",
+                "持仓均价": "0",
+                "最后价格": "96992.9",
+                "尾单价格": null,
+                "开仓触发价": null,
+                "止盈触发价": null,
                 "实现盈亏": "0.0",
-                "总体止盈": "-",
-                "总体止损": "-",
-                "最后时间": "02:14:42",
-                "时间戳": 1739988882499,
-                "标识符": "d76c8b87"
+                "总体止盈": null,
+                "总体止损": null,
+                "最后时间": "16:46:20",
+                "时间戳": 1740041180774,
+                "标识符": "903fce3c"
+            }
+        },
+        "9b0c3e2b": {
+            "uid": "9b0c3e2b",
+            "pair": "ETH/USDT",
+            "exchange": "bitget",
+            "inst_type": "SPOT",
+            "direction": "LONG",
+            "take_profit_config": {
+                "enabled": false,
+                "profit_amount": null
+            },
+            "stop_loss_config": {
+                "enabled": false,
+                "loss_amount": null
+            },
+            "total_realized_profit": 0.0,
+            "grid_levels": {},
+            "row_dict": {
+                "交易所": "bitget",
+                "交易对": "ETH/USDT",
+                "方向": "LONG",
+                "操作": {
+                    "开仓": true,
+                    "平仓": true
+                },
+                "运行状态": "运行中",
+                "当前层数": null,
+                "持仓价值": null,
+                "持仓盈亏": null,
+                "持仓均价": null,
+                "最后价格": null,
+                "尾单价格": null,
+                "开仓触发价": null,
+                "止盈触发价": null,
+                "实现盈亏": "0",
+                "总体止盈": null,
+                "总体止损": null,
+                "最后时间": null,
+                "时间戳": null,
+                "标识符": "9b0c3e2b"
             }
         }
     },
     "running_strategies": [
-        "d76c8b87"
+        "d76c8b87",
+        "903fce3c",
+        "9b0c3e2b"
     ]
 }

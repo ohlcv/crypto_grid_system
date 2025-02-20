@@ -168,9 +168,6 @@ class GridStrategyManager(QObject):
     def start_strategy(self, uid: str, exchange_client: BaseClient) -> bool:
         """启动策略运行"""
         print(f"\n[GridStrategyManager] === 启动策略运行 === {uid}")
-        # print(f"[GridStrategyManager] 当前线程状态:")
-        # for t in threading.enumerate():
-        #     print(f"  - {t.name} (ID: {t.ident}, 活跃: {t.is_alive()})")
         
         try:
             # 获取grid_data
@@ -190,12 +187,15 @@ class GridStrategyManager(QObject):
 
             # 如果不存在trader或trader已停止，创建新的trader
             if not trader:
+                print(f"[GridStrategyManager] 创建新的trader实例...")
                 trader = GridTrader(grid_data)
                 self._strategies[uid] = trader
 
             # 获取并缓存交易对参数
+            print(f"[GridStrategyManager] 开始缓存交易对参数...")
             if not self._cache_trading_params(trader.grid_data, exchange_client):
                 error_msg = "获取交易对参数失败"
+                print(f"[GridStrategyManager] {error_msg}")
                 self.strategy_error.emit(uid, error_msg)
                 return False
                 
@@ -208,20 +208,25 @@ class GridStrategyManager(QObject):
             print(f"[GridStrategyManager] 保持原有实现盈亏: {original_profit}")
             
             # 启动策略
+            print(f"[GridStrategyManager] 开始启动策略...")
             if trader.start():
+                print(f"[GridStrategyManager] 策略启动成功，发送启动信号...")
                 self.strategy_started.emit(uid)
+                
                 # 确保运行状态更新但不影响实现盈亏
+                print(f"[GridStrategyManager] 更新策略状态...")
                 grid_data.total_realized_profit = original_profit
                 grid_data.row_dict["实现盈亏"] = str(original_profit)
                 grid_data.row_dict["运行状态"] = "运行中"
-                grid_data.data_updated.emit(uid)
                 
-                # 打印更新后的线程状态
-                # print("\n[GridStrategyManager] 策略启动后线程状态:")
-                # for t in threading.enumerate():
-                #     print(f"  - {t.name} (ID: {t.ident}, 活跃: {t.is_alive()})")
+                print(f"[GridStrategyManager] 发送数据更新信号...")
+                print(f"[GridStrategyManager] 更新前的row_dict: {grid_data.row_dict}")
+                grid_data.data_updated.emit(uid)
+                print(f"[GridStrategyManager] 数据更新信号已发送")
+                print(f"[GridStrategyManager] 策略启动完成: {uid}")
                 return True
                 
+            print(f"[GridStrategyManager] 策略启动失败")
             return False
                 
         except Exception as e:
@@ -297,9 +302,7 @@ class GridStrategyManager(QObject):
                 return
 
             normalized_pair = pair.replace('/', '')
-            # print(f"\n[GridStrategyManager] === 处理市场数据 === {normalized_pair}")
-            # print(f"[GridStrategyManager] 原始数据: {data}")
-
+            
             # 获取所有运行中的策略ID
             running_strategies = set(self._strategies.keys())
             if not running_strategies:
@@ -316,47 +319,47 @@ class GridStrategyManager(QObject):
                 if grid_pair == normalized_pair:
                     affected_strategies.append(uid)
 
+            if affected_strategies:  # 只在找到相关策略时打印
+                print(f"\n[GridStrategyManager] === 处理市场数据 === {normalized_pair}")
+                print(f"[GridStrategyManager] 原始数据: {data}")
+                print(f"[GridStrategyManager] 行情交易对: {normalized_pair} 找到相关策略: {affected_strategies}")
+
             # 只有匹配的交易对且策略在运行时才处理
-            # print(f"[GridStrategyManager] 行情交易对: {normalized_pair} 找到相关策略: {affected_strategies}")
             for uid in affected_strategies:
                 try:
                     grid_data = self._data[uid]
-                    if not grid_data:
-                        continue
-
-                    # 检查是否运行中
                     trader = self._strategies.get(uid)
-                    if not trader or not trader._running:
+                    
+                    if not grid_data or not trader or not trader._running:
                         continue
 
                     # 检查操作状态
                     operation_status = grid_data.row_dict.get("操作", {})
                     if not operation_status.get("开仓", True) and not operation_status.get("平仓", True):
-                        continue  # 如果开平仓都被禁用，跳过更新
+                        continue
 
-                    # 检查数据完整性 - 修正这里的逻辑
+                    # 检查数据完整性
                     price_str = find_value(data, "lastPr")
                     timestamp = find_value(data, "ts")
-                    if not price_str or not timestamp:  # 改为检查是否为空
-                        print(f"[GridStrategyManager] 数据不完整: price={price_str}, timestamp={timestamp}")
+                    if not price_str or not timestamp:
                         continue
 
                     # 更新策略数据
+                    print(f"\n[GridStrategyManager] === 准备更新策略数据 === {uid}")
+                    print(f"[GridStrategyManager] 当前价格: {price_str}")
+                    print(f"[GridStrategyManager] 当前时间戳: {timestamp}")
+                    print(f"[GridStrategyManager] 操作状态: {operation_status}")
+                    print(f"[GridStrategyManager] 开始更新市场数据...")
+                    
                     grid_data.update_market_data(data)
+                    
+                    print(f"[GridStrategyManager] 市场数据更新完成")
+                    print(f"[GridStrategyManager] 更新后的row_dict: {grid_data.row_dict}")
 
                 except Exception as e:
                     print(f"[GridStrategyManager] 更新策略 {uid} 失败: {e}")
                     print(f"[GridStrategyManager] 错误详情: {traceback.format_exc()}")
-                    
-                    # 尝试停止出错的策略
-                    try:
-                        if uid in self._strategies:
-                            trader = self._strategies[uid]
-                            trader.stop()
-                            del self._strategies[uid]
-                            self.strategy_error.emit(uid, f"策略数据更新错误: {str(e)}")
-                    except Exception as stop_error:
-                        print(f"[GridStrategyManager] 停止策略失败: {stop_error}")
+                    self._handle_strategy_error(uid, f"策略数据更新错误: {str(e)}")
 
         except Exception as e:
             print(f"[GridStrategyManager] 处理市场数据错误: {e}")

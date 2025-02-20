@@ -8,7 +8,7 @@ from typing import Optional
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QMessageBox, QDialog
 )
-from qtpy.QtCore import Qt, QTimer
+from qtpy.QtCore import Qt, QTimer, Signal
 
 from src.exchange.base_client import ExchangeType, BaseClient
 from src.exchange.client_factory import ExchangeClientFactory
@@ -32,7 +32,8 @@ def show_error_dialog(func):
 
 class GridStrategyTab(QWidget):
     """网格策略Tab页 - 重构后的主类实现"""
-    
+    update_ui_signal = Signal(str)  # uid 参数
+
     def __init__(self, inst_type: str, client_factory: ExchangeClientFactory):
         super().__init__()
         # 基础配置
@@ -61,6 +62,8 @@ class GridStrategyTab(QWidget):
         QTimer.singleShot(500, self._auto_connect_exchange)
         # 加载策略数据
         self.strategy_wrapper.load_strategies()
+        # 连接UI更新信号到主线程槽函数
+        self.update_ui_signal.connect(self._update_ui_in_main_thread)
 
     def setup_ui(self):
         """设置UI布局"""
@@ -82,38 +85,58 @@ class GridStrategyTab(QWidget):
     @show_error_dialog
     def _connect_signals(self):
         """连接所有组件信号"""
-        # API配置管理器信号
-        self.api_manager.config_error.connect(self.show_error_message)
-        self.api_manager.config_updated.connect(self._handle_api_config_updated)
-        self.api_manager.exchange_changed.connect(self._handle_exchange_changed)
+        try:
+            print(f"[GridStrategyTab] === 开始连接信号 ===")
+            
+            # API配置管理器信号
+            self.api_manager.config_error.connect(self.show_error_message)
+            self.api_manager.config_updated.connect(self._handle_api_config_updated)
+            self.api_manager.exchange_changed.connect(self._handle_exchange_changed)
 
-        # 网格控制信号
-        self.grid_controls.pair_added.connect(self._handle_pair_added)
-        self.grid_controls.stop_all_requested.connect(self._handle_stop_all_requested)
-        self.grid_controls.operation_toggled.connect(self._handle_operation_toggled)
-        self.grid_controls.position_mode_changed.connect(self._handle_position_mode_changed)
-        self.grid_controls.dialog_requested.connect(lambda type, title, msg: self.show_dialog(type, title, msg))
-        
-        # 表格信号
-        self.grid_table.strategy_setting_requested.connect(self._handle_strategy_setting)
-        self.grid_table.strategy_start_requested.connect(self._handle_strategy_start)
-        self.grid_table.strategy_stop_requested.connect(self._handle_strategy_stop)
-        self.grid_table.strategy_delete_requested.connect(self._handle_strategy_delete)
-        self.grid_table.strategy_close_requested.connect(self._handle_strategy_close)
-        self.grid_table.strategy_refresh_requested.connect(self._handle_strategy_refresh)
-        self.grid_table.dialog_requested.connect(lambda type, title, msg: self.show_dialog(type, title, msg))
-        
-        # 策略管理器信号
-        self.strategy_wrapper.strategy_added.connect(self._handle_strategy_added)
-        self.strategy_wrapper.strategy_deleted.connect(self._handle_strategy_deleted)
-        self.strategy_wrapper.strategy_updated.connect(self._handle_strategy_updated)
-        self.strategy_wrapper.strategy_error.connect(self._handle_strategy_error)
-        self.strategy_wrapper.strategy_started.connect(self._handle_strategy_started)
-        self.strategy_wrapper.strategy_stopped.connect(self._handle_strategy_stopped)
-        
-        # 添加客户端状态信号连接
-        self.client_factory.client_status_changed.connect(self._handle_client_status_changed)
-        self.client_factory.client_created.connect(self._handle_client_created)
+            # 网格控制信号
+            self.grid_controls.pair_added.connect(self._handle_pair_added)
+            self.grid_controls.stop_all_requested.connect(self._handle_stop_all_requested)
+            self.grid_controls.operation_toggled.connect(self._handle_operation_toggled)
+            self.grid_controls.position_mode_changed.connect(self._handle_position_mode_changed)
+            self.grid_controls.dialog_requested.connect(lambda type, title, msg: self.show_dialog(type, title, msg))
+            
+            # 表格信号
+            self.grid_table.strategy_setting_requested.connect(self._handle_strategy_setting)
+            self.grid_table.strategy_start_requested.connect(self._handle_strategy_start)
+            self.grid_table.strategy_stop_requested.connect(self._handle_strategy_stop)
+            self.grid_table.strategy_delete_requested.connect(self._handle_strategy_delete)
+            self.grid_table.strategy_close_requested.connect(self._handle_strategy_close)
+            self.grid_table.strategy_refresh_requested.connect(self._handle_strategy_refresh)
+            self.grid_table.dialog_requested.connect(lambda type, title, msg: self.show_dialog(type, title, msg))
+            
+            # 策略管理器信号
+            self.strategy_wrapper.strategy_added.connect(self._handle_strategy_added)
+            self.strategy_wrapper.strategy_deleted.connect(self._handle_strategy_deleted)
+            self.strategy_wrapper.strategy_updated.connect(self._handle_strategy_updated)
+            self.strategy_wrapper.strategy_error.connect(self._handle_strategy_error)
+            self.strategy_wrapper.strategy_started.connect(self._handle_strategy_started)
+            self.strategy_wrapper.strategy_stopped.connect(self._handle_strategy_stopped)
+            
+            # 添加客户端状态信号连接
+            self.client_factory.client_status_changed.connect(self._handle_client_status_changed)
+            self.client_factory.client_created.connect(self._handle_client_created)
+            
+            # 连接所有已加载策略的数据更新信号
+            print(f"[GridStrategyTab] 开始连接已加载策略的数据更新信号...")
+            strategy_uids = self.strategy_wrapper.get_all_strategy_uids()
+            for uid in strategy_uids:
+                grid_data = self.strategy_wrapper.get_strategy_data(uid)
+                if grid_data:
+                    print(f"[GridStrategyTab] 连接策略 {uid} 的数据更新信号")
+                    grid_data.data_updated.connect(
+                        self._handle_strategy_updated
+                    )
+                    
+            print(f"[GridStrategyTab] === 信号连接完成 ===")
+            
+        except Exception as e:
+            print(f"[GridStrategyTab] 连接信号时发生错误: {e}")
+            print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
 
     @show_error_dialog
     def _handle_client_status_changed(self, tab_id: str, status: str):
@@ -376,6 +399,7 @@ class GridStrategyTab(QWidget):
         """处理策略添加事件"""
         grid_data = self.strategy_wrapper.get_strategy_data(uid)
         if grid_data:
+            grid_data.data_updated.connect(self._handle_strategy_updated)
             self.grid_table.add_strategy_row(grid_data)
 
     @show_error_dialog
@@ -385,10 +409,27 @@ class GridStrategyTab(QWidget):
 
     @show_error_dialog
     def _handle_strategy_updated(self, uid: str):
-        """处理策略更新事件"""
-        grid_data = self.strategy_wrapper.get_strategy_data(uid)
-        if grid_data:
-            self.grid_table.update_strategy_row(uid, grid_data)
+        """处理策略更新事件 - 可能在非主线程中调用"""
+        print(f"\n[GridStrategyTab] === 接收到策略更新事件 === {uid}")
+        # 发送信号到主线程
+        self.update_ui_signal.emit(uid)
+
+    @show_error_dialog
+    def _update_ui_in_main_thread(self, uid: str):
+        """在主线程中更新UI"""
+        try:
+            print(f"\n[GridStrategyTab] === 主线程处理策略更新 === {uid}")
+            grid_data = self.strategy_wrapper.get_strategy_data(uid)
+            if grid_data:
+                print(f"[GridStrategyTab] 获取到策略数据: {grid_data.row_dict}")
+                print(f"[GridStrategyTab] 开始更新表格...")
+                self.grid_table.update_strategy_row(uid, grid_data)
+                print(f"[GridStrategyTab] 表格更新完成")
+            else:
+                print(f"[GridStrategyTab] 未找到策略数据: {uid}")
+        except Exception as e:
+            print(f"[GridStrategyTab] 更新UI失败: {e}")
+            print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
 
     @show_error_dialog
     def _handle_strategy_error(self, uid: str, error_msg: str):

@@ -124,11 +124,8 @@ class GridData(QObject):
         self.price_precision: Optional[int] = None    # 价格精度
         self.min_trade_amount: Optional[Decimal] = None  # 最小交易数量
         self.min_trade_value: Optional[Decimal] = None   # 最小交易额
-        # 添加节流控制
-        self._last_update_time = 0
-        self._min_update_interval = 0.1  # 最小更新间隔(秒)
 
-        self.row_dict = {
+        self._row_dict = {
             "交易所": exchange,
             "交易对": pair,
             "方向": "做多",  # 默认做多
@@ -202,25 +199,31 @@ class GridData(QObject):
 
     @property  
     def row_dict(self) -> dict:
-        """获取 row_dict 的只读副本"""
+        """获取 row_dict"""
         return self._row_dict
         
     @row_dict.setter
     def row_dict(self, value: dict):
         """设置整个 row_dict"""
-        # with self._lock:
         self._row_dict = value
         self.data_updated.emit(self.uid)
 
     def update_row_dict(self, updates: dict):
-        """更新 row_dict 的多个值"""  
-        # with self._lock:
+        """更新表格显示数据"""
+        print(f"\n[GridData] === 更新表格数据 === {self.uid}")
+        print(f"[GridData] 更新前的数据: {self._row_dict}")
+        print(f"[GridData] 待更新数据: {updates}")
+
+        # 更新数据
         self._row_dict.update(updates)
+        print(f"[GridData] 更新后的数据: {self._row_dict}")
+        print(f"[GridData] 发送数据更新信号...")
+        # 发送更新信号
         self.data_updated.emit(self.uid)
+        print(f"[GridData] 数据更新信号已发送")
 
     def set_row_value(self, key: str, value: Any):
         """设置 row_dict 的单个值"""
-        # with self._lock:
         self._row_dict[key] = value 
         self.data_updated.emit(self.uid)
 
@@ -670,11 +673,6 @@ class GridData(QObject):
     def update_market_data(self, data) -> None:
         """更新市场数据"""
         try:
-            # 检查更新间隔
-            current_time = time.time()
-            if current_time - self._last_update_time < self._min_update_interval:
-                return
-            # print(type(data), data)
             price_str = find_value(data, "lastPr")
             if not price_str:
                 return   
