@@ -34,10 +34,10 @@ class GridStrategyTab(QWidget):
     """网格策略Tab页 - 重构后的主类实现"""
     update_ui_signal = Signal(str)  # uid 参数
 
-    def __init__(self, inst_type: str, client_factory: ExchangeClientFactory):
+    def __init__(self, inst_type: ExchangeType, client_factory: ExchangeClientFactory):
         super().__init__()
         # 基础配置
-        self.inst_type = ExchangeType.SPOT if inst_type == "SPOT" else ExchangeType.FUTURES
+        self.inst_type = inst_type  # 直接使用枚举类型
         self.client_factory = client_factory
         self.tab_id = str(uuid.uuid4())
         self.exchange_client: Optional[BaseClient] = None
@@ -45,11 +45,11 @@ class GridStrategyTab(QWidget):
         # 创建子组件
         self.api_manager = APIConfigManager(
             self.tab_id,
-            ExchangeType.SPOT if inst_type == "SPOT" else ExchangeType.FUTURES,
+            self.inst_type,  # 直接传递枚举值
             client_factory
         )
-        self.grid_controls = GridControls(inst_type)
-        self.strategy_wrapper = StrategyManagerWrapper(inst_type, client_factory)
+        self.grid_controls = GridControls(self.inst_type)  # 传递枚举值
+        self.strategy_wrapper = StrategyManagerWrapper(self.inst_type, client_factory)  # 传递枚举值
         self.grid_table = GridTable(self.strategy_wrapper)
         
         # 设置UI
@@ -150,8 +150,9 @@ class GridStrategyTab(QWidget):
         print("\n[GridStrategyTab] === Client Created ===")
         try:
             # 检查客户端类型是否匹配
-            if client.inst_type != (ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES):
-                print(f"[GridStrategyTab] 客户端类型不匹配: expected {self.inst_type}, got {client.inst_type.value}")
+            print("client.inst_type=", client.inst_type, "self.inst_type=", self.inst_type)
+            if client.inst_type != self.inst_type:
+                print(f"[GridStrategyTab] 客户端类型不匹配: expected {self.inst_type.name}, got {client.inst_type.name}")
                 return
 
             # 检查是否是本标签页的客户端
@@ -161,10 +162,11 @@ class GridStrategyTab(QWidget):
                 return
                 
             self.exchange_client = client
-            print(f"[GridStrategyTab] 客户端设置完成: {client.inst_type.value}")
+            self.grid_controls.set_client(client)  # 设置grid_controls的客户端
+            print(f"[GridStrategyTab] 客户端设置完成: {client.inst_type.name}")
             self._connect_client_signals(client)
             
-            # 更新连接状态 - 修改这里
+            # 更新连接状态
             ws_status = client.get_ws_status()
             self.api_manager.update_connection_status("就绪" if client.is_connected else "未连接")
             self.api_manager.update_ws_status(True, ws_status.get('public', False))
@@ -201,7 +203,7 @@ class GridStrategyTab(QWidget):
             if hasattr(client, 'ws_status_changed'):
                 client.ws_status_changed.connect(self._handle_ws_status_changed)
 
-            print(f"[GridStrategyTab] 客户端信号连接完成: {client.inst_type.value}")
+            print(f"[GridStrategyTab] 客户端信号连接完成: {client.inst_type.name}")
 
         except Exception as e:
             print(f"[GridStrategyTab] 连接客户端信号失败: {e}")
@@ -220,24 +222,16 @@ class GridStrategyTab(QWidget):
         try:
             if self.exchange_client:  # 如果已经有客户端实例，直接返回
                 return
-                
-            # 获取当前配置
+
             current_exchange = self.api_manager.exchange_combo.currentText().lower()
             config = self.api_manager.get_current_config()
-            
-            # 检查配置完整性
-            if all([
-                config.get('api_key'),
-                config.get('api_secret'),
-                config.get('passphrase')
-            ]):
-                # 创建客户端
-                exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+
+            if all([config.get('api_key'), config.get('api_secret'), config.get('passphrase')]):
                 self.exchange_client = self.client_factory.create_client(
                     self.tab_id,
                     current_exchange,
                     config,
-                    exchange_type
+                    self.inst_type  # 正确传递枚举值
                 )
         except Exception as e:
             print(f"[GridStrategyTab] 自动连接交易所失败: {e}")
@@ -508,7 +502,7 @@ class GridStrategyTab(QWidget):
             return False
             
         # 验证客户端类型
-        expected_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+        expected_type = self.inst_type  # 直接使用枚举值
         if self.exchange_client.inst_type != expected_type:
             self.show_error_message(f"交易所客户端类型不匹配: 预期 {expected_type.value}, 实际 {self.exchange_client.inst_type.value}")
             return False

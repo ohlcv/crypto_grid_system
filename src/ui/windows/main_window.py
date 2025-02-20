@@ -78,7 +78,7 @@ class MainWindow(QMainWindow):
         try:
             inst_type = ExchangeType.SPOT
             if self.client_factory.get_supported_exchanges(inst_type):
-                self.spot_tab = GridStrategyTab("SPOT", self.client_factory)
+                self.spot_tab = GridStrategyTab(ExchangeType.SPOT, self.client_factory)
                 self.grid_tab_widget.addTab(self.spot_tab, "现货网格")
                 print("✅ 现货网格标签页加载成功")
                 # 立即连接现货
@@ -93,7 +93,7 @@ class MainWindow(QMainWindow):
         try:
             inst_type = ExchangeType.FUTURES
             if self.client_factory.get_supported_exchanges(inst_type):
-                self.futures_tab = GridStrategyTab("FUTURES", self.client_factory)
+                self.futures_tab = GridStrategyTab(ExchangeType.FUTURES, self.client_factory)
                 self.grid_tab_widget.addTab(self.futures_tab, "合约网格")
                 print("✅ 合约网格标签页加载成功")
                 # 添加完立即自动连接

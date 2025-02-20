@@ -169,7 +169,8 @@ class ExchangeClientFactory(QObject):
         try:
             with self._lock:
                 # 从注册中心获取配置
-                if not self.registry.get_supported_types(exchange).get(inst_type, False):
+                supported = self.registry.get_supported_types(exchange)
+                if not supported.get(inst_type, False):  # 这里会正确校验交易所支持
                     raise ValueError(f"{exchange} does not support {inst_type.value}")
 
                 client_class = self.registry.get_client_class(exchange)
@@ -350,13 +351,13 @@ class ExchangeClientFactory(QObject):
                 
             validator = self.registry.get_validator(client.exchange)
             if validator:
-                print(f"[ExchangeClientFactory] 开始验证 {client.inst_type.value} 账户")
+                print(f"[ExchangeClientFactory] 开始验证 {client.inst_type.name} 账户")
                 if not validator.validate_account(client):
                     if tab_id in self._client_status and inst_type in self._client_status[tab_id]:
                         self._client_status[tab_id][inst_type] = ClientStatus.FAILED
                     self.validation_failed.emit("账户验证失败，请使用邀请链接注册后再使用！")
                     return
-                print(f"[ExchangeClientFactory] {client.inst_type.value} 账户验证成功")
+                print(f"[ExchangeClientFactory] {client.inst_type.name} 账户验证成功")
                 self._validation_status[tab_id] = True
                 
                 # 验证成功后,更新WebSocket状态
@@ -432,7 +433,8 @@ class ExchangeClientFactory(QObject):
             inst_type: 交易类型,如果指定则只返回支持该类型的交易所
         """
         if inst_type is None:
-            return list(self._exchange_classes.keys())
+            return self.registry.get_all_exchanges()  # 使用注册表的现有方法
+            # 或者直接使用: return list(self.registry._client_classes.keys())
             
         return [
             exchange for exchange, support in self.registry._exchange_support.items()

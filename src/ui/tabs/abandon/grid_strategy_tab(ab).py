@@ -71,7 +71,7 @@ class GridStrategyTab(QWidget):
         self.current_exchange = None    # 当前选中的交易所
         self.exchange_client: Optional[BaseClient] = None
         self.config_path = os.path.join('./config/api_config', f'api_config.json')
-        self.data_path = os.path.join('./data', 'grid_strategy', f'{inst_type.lower()}_strategies.json')
+        self.data_path = os.path.join('./data', 'grid_strategy', f'{inst_type.value.lower()}_strategies.json')
         # 创建自动保存定时器
         self.auto_save_timer = QTimer(self)
         self.auto_save_timer.timeout.connect(lambda: self.save_data(show_message=False))

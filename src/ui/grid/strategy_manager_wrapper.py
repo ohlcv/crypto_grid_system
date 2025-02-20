@@ -2,12 +2,13 @@
 
 import os
 import json
+import uuid
 import threading
 import traceback
-from typing import Optional, Dict, List
+from enum import Enum
 from decimal import Decimal
 from datetime import datetime
-import uuid
+from typing import Optional, Dict, List
 from qtpy.QtCore import QObject, Signal
 
 from src.exchange.base_client import ExchangeType, BaseClient
@@ -16,6 +17,15 @@ from src.strategy.grid.grid_core import GridData, GridDirection
 from src.strategy.grid.grid_strategy_manager import GridStrategyManager
 from src.utils.common.common import create_file_if_not_exists
 
+
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Enum):
+            return obj.value  # 将枚举转换为其值
+        if isinstance(obj, Decimal):
+            return float(obj)  # 将 Decimal 转换为 float
+        return super().default(obj)
+    
 class StrategyManagerWrapper(QObject):
     """策略管理器包装类,处理策略的创建、管理和数据持久化"""
     
@@ -31,18 +41,18 @@ class StrategyManagerWrapper(QObject):
     save_error = Signal(str)  # error_message
     load_error = Signal(str)  # error_message
 
-    def __init__(self, inst_type: str, client_factory: ExchangeClientFactory):
+    def __init__(self, inst_type: ExchangeType, client_factory: ExchangeClientFactory):
         super().__init__()
         self.inst_type = inst_type
         self.client_factory = client_factory
         self.strategy_manager = GridStrategyManager()
         self._subscriptions = {}  # pair -> set(strategy_uids)
         
-        # 设置数据保存路径
+        # 设置数据保存路径，使用 .value 获取枚举值并转为小写
         self.data_path = os.path.join(
             './data', 
             'grid_strategy', 
-            f'{inst_type.lower()}_strategies.json'
+            f'{inst_type.value.lower()}_strategies.json'
         )
         
         # 保存线程控制
@@ -120,7 +130,7 @@ class StrategyManagerWrapper(QObject):
 
             # 设置方向 - 统一使用枚举
             grid_data.set_direction(
-                is_long=(self.inst_type == "SPOT" or is_long)
+                is_long=(self.inst_type == ExchangeType.SPOT or is_long)
             )
             
             # 初始化操作状态
@@ -129,7 +139,7 @@ class StrategyManagerWrapper(QObject):
             # 缓存交易对参数
             if pair_data:
                 print("\n[StrategyManagerWrapper] === 缓存交易参数 ===")
-                if self.inst_type == "SPOT":
+                if self.inst_type == ExchangeType.SPOT:
                     grid_data.quantity_precision = int(pair_data.get('quantityPrecision', 4))
                     grid_data.price_precision = int(pair_data.get('pricePrecision', 2))
                     grid_data.min_trade_amount = Decimal(str(pair_data.get('minTradeAmount', '0')))
@@ -335,11 +345,10 @@ class StrategyManagerWrapper(QObject):
             return False
 
     def save_strategies(self, show_message: bool = True):
-        """保存策略数据"""
         def _save():
             try:
                 data = {
-                    'inst_type': self.inst_type,
+                    'inst_type': self.inst_type.value,  # 已经是字符串
                     'strategies': {},
                     'running_strategies': []
                 }
@@ -347,22 +356,17 @@ class StrategyManagerWrapper(QObject):
                 for uid in list(self.strategy_manager._data.keys()):
                     grid_data = self.strategy_manager.get_strategy_data(uid)
                     if grid_data:
-                        # 临时更新运行状态
                         original_status = grid_data.row_dict.get("运行状态", "")
                         grid_data.row_dict["运行状态"] = "已保存"
-                        
                         data['strategies'][uid] = grid_data.to_dict()
-                        
-                        # 恢复原始运行状态
                         grid_data.row_dict["运行状态"] = original_status
-                        
                         if self.strategy_manager.is_strategy_running(uid):
                             data['running_strategies'].append(uid)
 
-                # 保存到JSON文件
+                # 使用自定义编码器保存到文件
                 create_file_if_not_exists(self.data_path)
                 with open(self.data_path, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=4, ensure_ascii=False)
+                    json.dump(data, f, indent=4, ensure_ascii=False, cls=CustomJSONEncoder)
                 
                 if show_message:
                     self.data_saved.emit("数据已成功保存！")
@@ -376,11 +380,9 @@ class StrategyManagerWrapper(QObject):
             finally:
                 self._save_thread = None
 
-        # 如果已有保存线程在运行，等待其完成
         if self._save_thread and self._save_thread.is_alive():
             print("[StrategyManagerWrapper] 已有保存操作在进行中...")
             return
-            
         self._save_thread = threading.Thread(
             name=f"Strategy-Save-{id(self)}",
             target=_save,
@@ -406,6 +408,7 @@ class StrategyManagerWrapper(QObject):
                 # 读取数据文件
                 with open(self.data_path, 'r', encoding='utf-8') as f:
                     content = f.read().strip()
+                    print(f"[StrategyManagerWrapper] 加载文件内容:\n{content}")
                     if not content:  # 空文件
                         if show_message:
                             self.data_loaded.emit("无历史数据，已初始化空配置")
@@ -415,10 +418,6 @@ class StrategyManagerWrapper(QObject):
                 if not isinstance(data, dict) or 'strategies' not in data:
                     raise ValueError("无效的数据格式")
 
-                
-                # self.strategy_manager.stop_all_strategies()     # 停止所有运行中的策略
-                # self.strategy_manager._data.clear()     # 清空当前数据
-                
                 # 恢复所有策略数据
                 loaded_count = 0
                 for uid, strategy_data in data['strategies'].items():
@@ -441,7 +440,6 @@ class StrategyManagerWrapper(QObject):
                             # 设置方向 - 直接使用枚举
                             grid_data.direction = GridDirection[direction]
                             grid_data.row_dict["方向"] = direction
-                            # grid_data.row_dict["方向"] = direction.lower()  # 统一使用小写
                             
                             # 恢复实现盈亏值
                             original_profit = Decimal(str(strategy_data.get('total_realized_profit', '0')))

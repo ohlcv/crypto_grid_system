@@ -60,7 +60,7 @@ class JsonDB:
             包含策略数据的字典，如果文件不存在则返回空字典
         """
         try:
-            filename = os.path.join(self.data_dir, f'grid_data_{inst_type.lower()}.json')
+            filename = os.path.join(self.data_dir, f'grid_data_{inst_type.value.lower()}.json')
             
             if not os.path.exists(filename):
                 print(f"[JsonDB] Data file not found: {filename}")

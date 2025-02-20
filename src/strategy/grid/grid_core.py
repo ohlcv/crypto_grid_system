@@ -147,8 +147,13 @@ class StopLossConfig:
     
 class GridDirection(Enum):
     """网格方向"""
-    LONG = "LONG"   # 做多 
-    SHORT = "SHORT" # 做空
+    LONG = "long"   # 做多 
+    SHORT = "short" # 做空
+
+class ExchangeType(Enum):
+    """交易所类型"""
+    SPOT = "spot"
+    FUTURES = "futures"
 
 @dataclass
 class LevelConfig:
@@ -168,7 +173,7 @@ class GridData(QObject):
     """单个网格策略的数据容器"""
     data_updated = Signal(str)
 
-    def __init__(self, uid: str, pair: str, exchange: str, inst_type: str):
+    def __init__(self, uid: str, pair: str, exchange: str, inst_type: ExchangeType):
         super().__init__()  # 调用 QObject 的初始化方法
         self._lock = threading.Lock()
         self.uid = uid
@@ -840,8 +845,7 @@ class GridData(QObject):
         return None  # 已开满仓
 
     def is_spot(self) -> bool:
-        """是否现货"""
-        return self.inst_type == "SPOT"
+        return self.inst_type == ExchangeType.SPOT
 
     def to_dict(self) -> dict:
         """转换为字典格式"""
@@ -849,7 +853,7 @@ class GridData(QObject):
             "uid": self.uid,
             "pair": self.pair,
             "exchange": self.exchange,
-            "inst_type": self.inst_type,
+            "inst_type": self.inst_type.value,
             "direction": self.direction.value,
             "take_profit_config": self.take_profit_config.to_dict(),
             "stop_loss_config": self.stop_loss_config.to_dict(),
@@ -877,7 +881,8 @@ class GridData(QObject):
     def from_dict(cls, data: dict) -> 'GridData':
         """从字典创建实例"""
         print(f"[GridData] === 反序列化数据 === {data['uid']}")
-        instance = cls(data["uid"], data["pair"], data["exchange"], data["inst_type"])
+        inst_type = ExchangeType(data["inst_type"])
+        instance = cls(data["uid"], data["pair"], data["exchange"], inst_type)
         instance.direction = GridDirection(data["direction"])
         
         # 恢复网格配置

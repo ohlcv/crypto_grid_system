@@ -197,8 +197,8 @@ class APIConfigManager(QObject):
 
     def update_ws_status(self, is_public: bool, connected: bool):
         """更新WebSocket状态"""
-        print(f"\n=== WebSocket状态更新 ===")
-        print(f"[APIConfigManager] 收到更新: {'公有' if is_public else '私有'} - {'已连接' if connected else '未连接'}")
+        # print(f"\n=== WebSocket状态更新 ===")
+        # print(f"[APIConfigManager] 收到更新: {'公有' if is_public else '私有'} - {'已连接' if connected else '未连接'}")
         
         # 添加断开连接的处理
         if not connected:
@@ -223,9 +223,9 @@ class APIConfigManager(QObject):
             
         # 强制更新UI
         QApplication.processEvents()  # 处理所有待处理的事件
-        print(f"[APIConfigManager] 当前状态:")
-        print(f"- 公有连接状态: {self.public_ws_connected}")
-        print(f"- 私有连接状态: {self.private_ws_connected}")
+        # print(f"[APIConfigManager] 当前状态:")
+        # print(f"- 公有连接状态: {self.public_ws_connected}")
+        # print(f"- 私有连接状态: {self.private_ws_connected}")
 
     def _create_default_config(self) -> dict:
         """创建默认配置"""

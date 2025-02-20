@@ -8,6 +8,8 @@ from qtpy.QtWidgets import (
 from qtpy.QtCore import Qt, Signal, QRegularExpression
 from qtpy.QtGui import QRegularExpressionValidator, QColor
 
+from src.exchange.base_client import ExchangeType
+
 class GridControls(QWidget):
     """网格策略控制组件"""
     
@@ -18,7 +20,7 @@ class GridControls(QWidget):
     position_mode_changed = Signal(bool)  # is_long
     dialog_requested = Signal(str, str, str)
 
-    def __init__(self, inst_type: str):
+    def __init__(self, inst_type: ExchangeType):
         super().__init__()
         self.inst_type = inst_type
         self.client = None

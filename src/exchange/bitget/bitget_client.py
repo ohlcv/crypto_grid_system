@@ -111,7 +111,7 @@ class BitgetClient(BaseClient):
         self._private_ws = None
         self._init_websockets()
         
-        print(f"[BitgetClient] {inst_type.value}客户端初始化完成")
+        print(f"[BitgetClient] {inst_type.name}客户端初始化完成")  # 使用.name替代.value
 
     def _init_websockets(self):
         """初始化WebSocket客户端"""
@@ -159,7 +159,7 @@ class BitgetClient(BaseClient):
             # 如果状态发生变化
             if self._connected != current_status:
                 self._connected = current_status
-                print(f"[BitgetClient] {self.inst_type.value} 连接状态更新: {current_status}")
+                print(f"[BitgetClient] {self.inst_type.name} 连接状态更新: {current_status}")
                 
                 # 发送状态变化信号
                 if current_status:
@@ -202,11 +202,11 @@ class BitgetClient(BaseClient):
     def connect(self, wait: bool = True):
         """建立连接"""
         try:
-            print(f"\n=== BitgetClient {self.inst_type.value} 开始连接 ===")
+            print(f"\n=== BitgetClient {self.inst_type.name} 开始连接 ===")
             
             # 启动公共和私有WebSocket连接
             def start_connections():
-                print(f"[BitgetClient] {self.inst_type.value} 开始连接WebSocket...")
+                print(f"[BitgetClient] {self.inst_type.name} 开始连接WebSocket...")
                 self._public_ws.connect()
                 self._private_ws.connect()
                 
@@ -214,7 +214,7 @@ class BitgetClient(BaseClient):
             if not wait:
                 threading.Thread(
                     target=start_connections,
-                    name=f"WebSocket-{self.inst_type.value}-Connect-{id(self)}",
+                    name=f"WebSocket-{self.inst_type.name}-Connect-{id(self)}",
                     daemon=True
                 ).start()
                 return True
@@ -234,19 +234,19 @@ class BitgetClient(BaseClient):
             # 先断开私有WebSocket
             if self._private_ws:
                 self._private_ws.disconnect()
-                print(f"[BitgetClient] {self.inst_type.value} 断开私有WebSocket")
+                print(f"[BitgetClient] {self.inst_type.name} 断开私有WebSocket")
             
             # 再断开公共WebSocket
             if self._public_ws:
                 self._public_ws.disconnect()
-                print(f"[BitgetClient] {self.inst_type.value} 断开公共WebSocket")
+                print(f"[BitgetClient] {self.inst_type.name} 断开公共WebSocket")
             
             # 更新状态
             self._connected = False
-            print(f"[BitgetClient] {self.inst_type.value} 连接已断开")
+            print(f"[BitgetClient] {self.inst_type.name} 连接已断开")
             return True
         except Exception as e:
-            print(f"[BitgetClient] {self.inst_type.value} 断开连接失败: {e}")
+            print(f"[BitgetClient] {self.inst_type.name} 断开连接失败: {e}")
             return False
 
     def _load_valid_pair(self):
@@ -375,10 +375,13 @@ class BitgetClient(BaseClient):
                 "error": f"验证交易对失败: {str(e)}"
             }
 
+    def _get_inst_type_str(self) -> str:
+        """将ExchangeType转换为Bitget API所需的字符串"""
+        return "SPOT" if self.inst_type == ExchangeType.SPOT else "USDT-FUTURES"
+
     def subscribe_pair(self, pair: str, channels: List[str], strategy_uid: str) -> bool:
-        """订阅交易对"""
         try:
-            inst_type = "SPOT" if self.inst_type == ExchangeType.SPOT else "USDT-FUTURES"
+            inst_type_str = self._get_inst_type_str()  # 使用映射方法
             pair = pair.replace('/', '')
             
             print(f"[BitgetClient] === 订阅交易对 ===")
@@ -386,13 +389,10 @@ class BitgetClient(BaseClient):
             print(f"频道: {channels}")
             print(f"策略ID: {strategy_uid}")
             
-            # 添加策略订阅
             for channel in channels:
                 if not self._subscription_manager.subscribe(pair, channel, strategy_uid):
                     return False
-                
-                # 如果这个频道之前没有订阅过，发送WebSocket订阅请求
-                request = WSRequest(channel=channel, pair=pair, inst_type=inst_type)
+                request = WSRequest(channel=channel, pair=pair, inst_type=inst_type_str)
                 self._public_ws.subscribe(request)
             
             return True
@@ -401,9 +401,8 @@ class BitgetClient(BaseClient):
             return False
 
     def unsubscribe_pair(self, pair: str, channels: List[str], strategy_uid: str) -> bool:
-        """取消订阅"""
         try:
-            inst_type = "SPOT" if self.inst_type == ExchangeType.SPOT else "USDT-FUTURES"
+            inst_type_str = self._get_inst_type_str()  # 使用映射方法
             pair = pair.replace('/', '')
             
             print(f"[BitgetClient] === 取消订阅 ===")
@@ -411,21 +410,16 @@ class BitgetClient(BaseClient):
             print(f"频道: {channels}")
             print(f"策略ID: {strategy_uid}")
             
-            # 1. 先从管理器移除订阅
             for channel in channels:
                 self._subscription_manager.unsubscribe(pair, channel, strategy_uid)
-                    
-                # 2. 只有当这个频道没有任何订阅者时才发送取消订阅请求
                 if not self._subscription_manager.has_subscribers(pair, channel):
                     try:
-                        request = WSRequest(channel=channel, pair=pair, inst_type=inst_type)
+                        request = WSRequest(channel=channel, pair=pair, inst_type=inst_type_str)
                         self._public_ws.unsubscribe(request)
                     except Exception as e:
                         print(f"[BitgetClient] 取消WebSocket订阅失败: {e}")
-                        # 错误不影响结果
             
             return True
-            
         except Exception as e:
             print(f"[BitgetClient] 取消订阅失败: {e}")
             return False
@@ -446,17 +440,13 @@ class BitgetClient(BaseClient):
         )
 
     def update_credentials(self, api_key: str, api_secret: str, passphrase: str):
-        """更新API凭证"""
         self._api_key = api_key
         self._api_secret = api_secret
         self._passphrase = passphrase
         
-        # 更新REST API客户端
-        if self.inst_type == ExchangeType.SPOT:
-            self.rest_api = BitgetSpotAPI(api_key, api_secret, passphrase)
-        else:
-            self.rest_api = BitgetMixAPI(api_key, api_secret, passphrase)
+        self.rest_api = (BitgetSpotAPI(api_key, api_secret, passphrase) 
+                        if self.inst_type == ExchangeType.SPOT 
+                        else BitgetMixAPI(api_key, api_secret, passphrase))
 
-        # 需要重新连接WebSocket
         self.disconnect()
         self.connect()
