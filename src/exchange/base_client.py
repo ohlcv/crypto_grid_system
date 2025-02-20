@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from qtpy.QtCore import QObject, Signal
 
-class ExchangeType(Enum):
+class InstType(Enum):
     """交易所类型"""
     SPOT = "spot"
     FUTURES = "futures"
@@ -74,7 +74,7 @@ class BaseClient(QObject):
     error_occurred = Signal(str)              # error_type, error_message
     ws_status_changed = Signal(dict)          # 添加WS状态变化信号
 
-    def __init__(self, inst_type: ExchangeType):
+    def __init__(self, inst_type: InstType):
         super().__init__()
         self.inst_type = inst_type
         self._connected = False

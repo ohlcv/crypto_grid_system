@@ -375,7 +375,7 @@ class GridDialog(QDialog):
         input_field.setValidator(validator)
         return input_field
 
-    def validate_input(self, text, data_type, field_name, min_value=0, min_trade_value=5):
+    def validate_input(self, text, data_type, field_name, min_value=0, min_trade_value=0):
         """验证输入值
         Args:
             text: 输入文本

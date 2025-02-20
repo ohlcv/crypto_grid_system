@@ -55,10 +55,11 @@ class BitgetSpotAPI:
             "size": size,
             "orderType": "market"
         }
+        
         if trade_side == "open":
             params["side"] = "buy"
         elif trade_side == "close":
-            params["side"] = "sell"
+            params["side"] = "sell"  
         else:
             err_msg = "trade_side 参数必须是 'open' 或 'close'"
             self.logger.error(err_msg)
@@ -71,9 +72,14 @@ class BitgetSpotAPI:
             params["clientOid"] = client_oid
 
         self.logger.info(f"现货-订单-参数: {params}")
-        response = self.order_api.placeOrder(params)
-        self.logger.info(f"现货-下单-返回 - {response}")
-        return response
+        
+        try:
+            response = self.order_api.placeOrder(params)
+            self.logger.info(f"现货-下单-返回: {response}")
+            return response
+        except Exception as e:
+            self.logger.error(f"下单请求失败: {str(e)}")
+            raise
 
     @error_handler()
     def get_fills(self, symbol, order_id=None, start_time=None, end_time=None, limit=None, id_less_than=None):

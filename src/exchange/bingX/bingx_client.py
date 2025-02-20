@@ -11,7 +11,7 @@ from decimal import Decimal
 from qtpy.QtCore import Qt
 import threading
 from src.exchange.base_client import (
-    BaseClient, ExchangeType, OrderRequest, OrderType,
+    BaseClient, InstType, OrderRequest, OrderType,
     OrderSide, TradeSide
 )
 from .bingx_rest_api import BingXRestAPI
@@ -21,7 +21,7 @@ from .exceptions import BingXAPIException
 class BingXClient(BaseClient):
     """BingX交易所客户端"""
 
-    def __init__(self, api_key: str, api_secret: str, passphrase: str, inst_type: ExchangeType):
+    def __init__(self, api_key: str, api_secret: str, passphrase: str, inst_type: InstType):
         """初始化BingX客户端
         
         Args:
@@ -43,7 +43,7 @@ class BingXClient(BaseClient):
             api_key=api_key,
             api_secret=api_secret,
             passphrase=passphrase,
-            is_spot=(inst_type == ExchangeType.SPOT)
+            is_spot=(inst_type == InstType.SPOT)
         )
 
         # 初始化WebSocket客户端

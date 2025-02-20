@@ -12,7 +12,7 @@ from src.exchange.bitget.v2.bg_v2_api import BitgetMixAPI, BitgetSpotAPI
 from src.exchange.bitget.v2.mix.order_api import MixOrderApi
 from src.exchange.bitget.v2.spot.order_api import SpotOrderApi
 from src.exchange.bitget.websocket.bgws_client import BGWebSocketClient
-from ..base_client import BaseClient, ExchangeType, OrderRequest, OrderResponse, WSRequest
+from ..base_client import BaseClient, InstType, OrderRequest, OrderResponse, WSRequest
 from src.utils.logger.log_helper import ws_logger, api_logger
 
 
@@ -85,7 +85,7 @@ class BitgetClient(BaseClient):
     private_ws_connected = Signal()
     ws_status_changed = Signal(bool, bool)
 
-    def __init__(self, api_key: str, api_secret: str, passphrase: str, inst_type: ExchangeType):
+    def __init__(self, api_key: str, api_secret: str, passphrase: str, inst_type: InstType):
         super().__init__(inst_type)
         print(f"[BitgetClient] 开始初始化{inst_type.value}客户端")
         
@@ -98,7 +98,7 @@ class BitgetClient(BaseClient):
         self.exchange = "bitget"
         
         # 创建REST API客户端
-        if inst_type == ExchangeType.SPOT:
+        if inst_type == InstType.SPOT:
             self.rest_api = BitgetSpotAPI(api_key, api_secret, passphrase)
         else:
             self.rest_api = BitgetMixAPI(api_key, api_secret, passphrase)
@@ -376,8 +376,8 @@ class BitgetClient(BaseClient):
             }
 
     def _get_inst_type_str(self) -> str:
-        """将ExchangeType转换为Bitget API所需的字符串"""
-        return "SPOT" if self.inst_type == ExchangeType.SPOT else "USDT-FUTURES"
+        """将InstType转换为Bitget API所需的字符串"""
+        return "SPOT" if self.inst_type == InstType.SPOT else "USDT-FUTURES"
 
     def subscribe_pair(self, pair: str, channels: List[str], strategy_uid: str) -> bool:
         try:
@@ -445,7 +445,7 @@ class BitgetClient(BaseClient):
         self._passphrase = passphrase
         
         self.rest_api = (BitgetSpotAPI(api_key, api_secret, passphrase) 
-                        if self.inst_type == ExchangeType.SPOT 
+                        if self.inst_type == InstType.SPOT 
                         else BitgetMixAPI(api_key, api_secret, passphrase))
 
         self.disconnect()

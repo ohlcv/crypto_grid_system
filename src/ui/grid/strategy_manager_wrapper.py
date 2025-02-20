@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Optional, Dict, List
 from qtpy.QtCore import QObject, Signal
 
-from src.exchange.base_client import ExchangeType, BaseClient
+from src.exchange.base_client import InstType, BaseClient
 from src.exchange.client_factory import ExchangeClientFactory
 from src.strategy.grid.grid_core import GridData, GridDirection
 from src.strategy.grid.grid_strategy_manager import GridStrategyManager
@@ -41,7 +41,7 @@ class StrategyManagerWrapper(QObject):
     save_error = Signal(str)  # error_message
     load_error = Signal(str)  # error_message
 
-    def __init__(self, inst_type: ExchangeType, client_factory: ExchangeClientFactory):
+    def __init__(self, inst_type: InstType, client_factory: ExchangeClientFactory):
         super().__init__()
         self.inst_type = inst_type
         self.client_factory = client_factory
@@ -130,16 +130,16 @@ class StrategyManagerWrapper(QObject):
 
             # 设置方向 - 统一使用枚举
             grid_data.set_direction(
-                is_long=(self.inst_type == ExchangeType.SPOT or is_long)
+                is_long=(self.inst_type == InstType.SPOT or is_long)
             )
             
             # 初始化操作状态
+            grid_data.set_direction(is_long=(self.inst_type == InstType.SPOT or is_long))
             grid_data.row_dict["操作"] = {"开仓": True, "平仓": True}
-            
             # 缓存交易对参数
             if pair_data:
                 print("\n[StrategyManagerWrapper] === 缓存交易参数 ===")
-                if self.inst_type == ExchangeType.SPOT:
+                if self.inst_type == InstType.SPOT:
                     grid_data.quantity_precision = int(pair_data.get('quantityPrecision', 4))
                     grid_data.price_precision = int(pair_data.get('pricePrecision', 2))
                     grid_data.min_trade_amount = Decimal(str(pair_data.get('minTradeAmount', '0')))
@@ -348,7 +348,7 @@ class StrategyManagerWrapper(QObject):
         def _save():
             try:
                 data = {
-                    'inst_type': self.inst_type.value,  # 已经是字符串
+                    'inst_type': self.inst_type.value,  # 确保使用 .value
                     'strategies': {},
                     'running_strategies': []
                 }
@@ -363,7 +363,6 @@ class StrategyManagerWrapper(QObject):
                         if self.strategy_manager.is_strategy_running(uid):
                             data['running_strategies'].append(uid)
 
-                # 使用自定义编码器保存到文件
                 create_file_if_not_exists(self.data_path)
                 with open(self.data_path, 'w', encoding='utf-8') as f:
                     json.dump(data, f, indent=4, ensure_ascii=False, cls=CustomJSONEncoder)
@@ -391,13 +390,6 @@ class StrategyManagerWrapper(QObject):
         self._save_thread.start()
 
     def load_strategies(self, exchange_client: Optional[BaseClient] = None, show_message: bool = True):
-        """
-        加载策略数据
-        
-        Args:
-            exchange_client: 可选的交易所客户端实例，用于恢复运行中的策略
-            show_message: 是否显示加载消息
-        """
         def _load():
             try:
                 if not os.path.exists(self.data_path):
@@ -405,11 +397,10 @@ class StrategyManagerWrapper(QObject):
                         self.data_loaded.emit("无历史数据，已初始化空配置")
                     return
 
-                # 读取数据文件
                 with open(self.data_path, 'r', encoding='utf-8') as f:
                     content = f.read().strip()
                     print(f"[StrategyManagerWrapper] 加载文件内容:\n{content}")
-                    if not content:  # 空文件
+                    if not content:
                         if show_message:
                             self.data_loaded.emit("无历史数据，已初始化空配置")
                         return
@@ -418,37 +409,32 @@ class StrategyManagerWrapper(QObject):
                 if not isinstance(data, dict) or 'strategies' not in data:
                     raise ValueError("无效的数据格式")
 
-                # 恢复所有策略数据
                 loaded_count = 0
                 for uid, strategy_data in data['strategies'].items():
                     try:
                         print(f"\n[StrategyManagerWrapper] === 加载策略 {uid} ===")
-
-                        # 获取方向
                         direction = strategy_data["direction"].upper()
-                        is_long = direction == "LONG"
-                        # 创建策略
+                        is_long = direction == GridDirection.LONG.name
+                        
+                        # 将字符串转换为 InstType
+                        inst_type = InstType(strategy_data["inst_type"])
+                        
                         grid_data = self.strategy_manager.create_strategy(
                             uid,
                             strategy_data["pair"],
                             strategy_data["exchange"],
-                            strategy_data["inst_type"],
-                            is_long  # 传递方向参数
+                            inst_type,  # 使用转换后的 InstType
+                            is_long
                         )
 
                         if grid_data:
-                            # 设置方向 - 直接使用枚举
                             grid_data.direction = GridDirection[direction]
                             grid_data.row_dict["方向"] = direction
-                            
-                            # 恢复实现盈亏值
                             original_profit = Decimal(str(strategy_data.get('total_realized_profit', '0')))
                             grid_data.total_realized_profit = original_profit
                             
-                            # 恢复网格配置
                             for level_str, config in strategy_data.get("grid_levels", {}).items():
                                 level = int(level_str)
-                                # 构建配置数据
                                 config_data = {
                                     "间隔%": config["间隔%"],
                                     "开仓反弹%": config["开仓反弹%"],
@@ -456,7 +442,6 @@ class StrategyManagerWrapper(QObject):
                                     "止盈%": config["止盈%"],
                                     "成交额": config["成交额"]
                                 }
-                                # 如果有成交信息则添加
                                 if config["已开仓"]:
                                     config_data.update({
                                         "filled_amount": config["成交量"],
@@ -466,27 +451,22 @@ class StrategyManagerWrapper(QObject):
                                         "order_id": config["order_id"]
                                     })
                                 grid_data.update_level(level, config_data)
-                                
-                            # 恢复UI显示数据
+                            
                             grid_data.row_dict.update(strategy_data["row_dict"])
-                            # 确保实现盈亏正确显示
                             grid_data.row_dict["实现盈亏"] = str(original_profit)
                             
-                            # 设置初始状态
                             grid_status = grid_data.get_grid_status()
                             filled_levels = sum(1 for config in grid_data.grid_levels.values() 
-                                           if config.is_filled)
-                            
-                            initial_status = "已添加"  # 默认状态
+                                        if config.is_filled)
+                            initial_status = "已添加"
                             if filled_levels > 0:
                                 position_value = grid_data.row_dict.get("持仓价值")
                                 if position_value and float(position_value.replace(",", "")) > 0:
-                                    initial_status = "已停止"  # 有持仓但策略未运行
+                                    initial_status = "已停止"
                                 else:
-                                    initial_status = "已平仓"  # 无持仓
+                                    initial_status = "已平仓"
                             grid_data.row_dict["运行状态"] = initial_status
                             
-                            # 发送策略添加信号
                             self.strategy_added.emit(uid)
                             loaded_count += 1
                             
@@ -507,11 +487,8 @@ class StrategyManagerWrapper(QObject):
             finally:
                 self._load_thread = None
 
-        # 如果已有加载线程在运行，等待其完成
         if self._load_thread and self._load_thread.is_alive():
             return
-            
-        # 创建新的加载线程
         self._load_thread = threading.Thread(
             name=f"GridStrategy-Load-{id(self)}",
             target=_load,

@@ -11,7 +11,7 @@ from qtpy.QtWidgets import (
     QLabel, QComboBox, QMessageBox, QApplication
 )
 from qtpy.QtCore import Qt, QTimer, Signal, QObject
-from src.exchange.base_client import ExchangeType, BaseClient 
+from src.exchange.base_client import InstType, BaseClient 
 from src.exchange.client_factory import ExchangeClientFactory
 
 class APIConfigManager(QObject):
@@ -23,7 +23,7 @@ class APIConfigManager(QObject):
     config_updated = Signal(dict)  # 新的配置数据
     exchange_changed = Signal(str)  # new_exchange
     
-    def __init__(self, tab_id: str, inst_type: ExchangeType, client_factory: ExchangeClientFactory):
+    def __init__(self, tab_id: str, inst_type: InstType, client_factory: ExchangeClientFactory):
         super().__init__()
         self.tab_id = tab_id
         self.inst_type = inst_type

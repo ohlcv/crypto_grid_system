@@ -7,7 +7,7 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import Qt
 from qtpy.QtGui import QIcon
-from src.exchange.base_client import ExchangeType
+from src.exchange.base_client import InstType
 from src.ui.grid.grid_strategy_tab import GridStrategyTab
 # from src.ui.tabs.grid_strategy_tab import GridStrategyTab
 from src.exchange.client_factory import ExchangeClientFactory
@@ -76,9 +76,9 @@ class MainWindow(QMainWindow):
     def add_spot_tab(self):
         """添加现货网格标签页"""
         try:
-            inst_type = ExchangeType.SPOT
+            inst_type = InstType.SPOT
             if self.client_factory.get_supported_exchanges(inst_type):
-                self.spot_tab = GridStrategyTab(ExchangeType.SPOT, self.client_factory)
+                self.spot_tab = GridStrategyTab(InstType.SPOT, self.client_factory)
                 self.grid_tab_widget.addTab(self.spot_tab, "现货网格")
                 print("✅ 现货网格标签页加载成功")
                 # 立即连接现货
@@ -91,9 +91,9 @@ class MainWindow(QMainWindow):
     def add_futures_tab(self):
         """添加合约网格标签页"""
         try:
-            inst_type = ExchangeType.FUTURES
+            inst_type = InstType.FUTURES
             if self.client_factory.get_supported_exchanges(inst_type):
-                self.futures_tab = GridStrategyTab(ExchangeType.FUTURES, self.client_factory)
+                self.futures_tab = GridStrategyTab(InstType.FUTURES, self.client_factory)
                 self.grid_tab_widget.addTab(self.futures_tab, "合约网格")
                 print("✅ 合约网格标签页加载成功")
                 # 添加完立即自动连接
@@ -167,7 +167,7 @@ class MainWindow(QMainWindow):
             '你确定要退出程序吗?',
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
-        
+
         if reply == QMessageBox.StandardButton.Yes:
             # 关闭所有标签页
             for i in range(self.grid_tab_widget.count()):

@@ -35,12 +35,12 @@ class GridTable(QTableWidget):
         # {"name": "时间戳", "type": "text", "editable": False, "width": 120},
         {"name": "最后时间", "type": "text", "editable": False, "width": 100},
         {"name": "最后价格", "type": "text", "editable": False, "width": 100},
+        {"name": "持仓均价", "type": "text", "editable": False, "width": 100},
         {"name": "开仓触发价", "type": "text", "editable": False, "width": 110},
         {"name": "止盈触发价", "type": "text", "editable": False, "width": 110},
         # {"name": "尾单价格", "type": "text", "editable": False, "width": 100},
         {"name": "均价止盈触发价", "type": "text", "editable": False, "width": 100},
         {"name": "均价止损触发价", "type": "text", "editable": False, "width": 100},
-        {"name": "持仓均价", "type": "text", "editable": False, "width": 100},
         {"name": "均价止盈", "type": "text", "editable": False, "width": 100},
         {"name": "均价止损", "type": "text", "editable": False, "width": 100},
         {"name": "总体止盈", "type": "text", "editable": False, "width": 100},
@@ -190,8 +190,8 @@ class GridTable(QTableWidget):
     def update_strategy_row(self, uid: str, grid_data: GridData):
         """更新策略行数据"""
         try:
-            print(f"\n[GridTable] === 开始更新策略行 === {uid}")
-            print(f"[GridTable] 更新数据: {grid_data.row_dict}")
+            # print(f"\n[GridTable] === 开始更新策略行 === {uid}")
+            # print(f"[GridTable] 更新数据: {grid_data.row_dict}")
             
             # 查找对应行
             row = -1
@@ -205,7 +205,7 @@ class GridTable(QTableWidget):
                 print(f"[GridTable] 未找到策略行: {uid}")
                 return
                 
-            print(f"[GridTable] 找到策略行: {row}")
+            # print(f"[GridTable] 找到策略行: {row}")
             
             # 更新各列数据
             for col in self.COLUMN_DEFINITIONS:
@@ -215,7 +215,7 @@ class GridTable(QTableWidget):
                     
                 value = grid_data.row_dict.get(col_name)
                 if value is not None:
-                    print(f"[GridTable] 更新列 {col_name}: {value}")
+                    # print(f"[GridTable] 更新列 {col_name}: {value}")
                     item = QTableWidgetItem(str(value))
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                     
@@ -239,7 +239,7 @@ class GridTable(QTableWidget):
                         
                     self.setItem(row, self.get_column_index(col_name), item)
 
-            print(f"[GridTable] === 策略行更新完成 ===")
+            # print(f"[GridTable] === 策略行更新完成 ===")
 
         except Exception as e:
             print(f"[GridTable] 更新策略行错误: {e}")

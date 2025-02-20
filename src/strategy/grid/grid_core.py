@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from qtpy.QtCore import QObject, Signal
+from src.exchange.base_client import InstType
 from src.utils.common.tools import find_value
 from src.utils.logger.log_helper import grid_logger
 from decimal import Decimal
@@ -150,11 +151,6 @@ class GridDirection(Enum):
     LONG = "long"   # 做多 
     SHORT = "short" # 做空
 
-class ExchangeType(Enum):
-    """交易所类型"""
-    SPOT = "spot"
-    FUTURES = "futures"
-
 @dataclass
 class LevelConfig:
     """网格层配置"""
@@ -173,7 +169,7 @@ class GridData(QObject):
     """单个网格策略的数据容器"""
     data_updated = Signal(str)
 
-    def __init__(self, uid: str, pair: str, exchange: str, inst_type: ExchangeType):
+    def __init__(self, uid: str, pair: str, exchange: str, inst_type: InstType):
         super().__init__()  # 调用 QObject 的初始化方法
         self._lock = threading.Lock()
         self.uid = uid
@@ -283,17 +279,17 @@ class GridData(QObject):
 
     def update_row_dict(self, updates: dict):
         """更新表格显示数据"""
-        print(f"\n[GridData] === 更新表格数据 === {self.uid}")
-        print(f"[GridData] 更新前的数据: {self._row_dict}")
-        print(f"[GridData] 待更新数据: {updates}")
+        # print(f"\n[GridData] === 更新表格数据 === {self.uid}")
+        # print(f"[GridData] 更新前的数据: {self._row_dict}")
+        # print(f"[GridData] 待更新数据: {updates}")
 
         # 更新数据
         self._row_dict.update(updates)
-        print(f"[GridData] 更新后的数据: {self._row_dict}")
-        print(f"[GridData] 发送数据更新信号...")
+        # print(f"[GridData] 更新后的数据: {self._row_dict}")
+        # print(f"[GridData] 发送数据更新信号...")
         # 发送更新信号
         self.data_updated.emit(self.uid)
-        print(f"[GridData] 数据更新信号已发送")
+        # print(f"[GridData] 数据更新信号已发送")
 
     def set_row_value(self, key: str, value: Any):
         """设置 row_dict 的单个值"""
@@ -845,7 +841,7 @@ class GridData(QObject):
         return None  # 已开满仓
 
     def is_spot(self) -> bool:
-        return self.inst_type == ExchangeType.SPOT
+        return self.inst_type == InstType.SPOT
 
     def to_dict(self) -> dict:
         """转换为字典格式"""
@@ -881,7 +877,7 @@ class GridData(QObject):
     def from_dict(cls, data: dict) -> 'GridData':
         """从字典创建实例"""
         print(f"[GridData] === 反序列化数据 === {data['uid']}")
-        inst_type = ExchangeType(data["inst_type"])
+        inst_type = InstType(data["inst_type"])
         instance = cls(data["uid"], data["pair"], data["exchange"], inst_type)
         instance.direction = GridDirection(data["direction"])
         

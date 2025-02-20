@@ -17,7 +17,7 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import Qt, QTimer, QRegularExpression, Signal
 from qtpy.QtGui import QRegularExpressionValidator, QColor
-from src.exchange.base_client import BaseClient, ExchangeType
+from src.exchange.base_client import BaseClient, InstType
 from src.exchange.bitget.exceptions import BitgetAPIException
 from src.exchange.client_factory import ExchangeClientFactory
 from src.strategy.grid.grid_core import GridData, GridDirection
@@ -282,7 +282,7 @@ class GridStrategyTab(QWidget):
             return False
         return True
 
-    def _reset_and_create_client(self, config: dict, exchange_type: ExchangeType):
+    def _reset_and_create_client(self, config: dict, exchange_type: InstType):
         """重置客户端并创建新客户端"""
         try:
             current_exchange = self.config.get('current', '').lower()
@@ -337,7 +337,7 @@ class GridStrategyTab(QWidget):
         
         if "API验证失败" in error_msg:
             print("[GridStrategyTab] API验证失败，重置客户端")
-            exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+            exchange_type = InstType.SPOT if self.inst_type == "SPOT" else InstType.FUTURES
             self._reset_and_create_client(self.config, exchange_type)
             self.update_exchange_status(False)
 
@@ -425,7 +425,7 @@ class GridStrategyTab(QWidget):
             
             # 如果有完整的API配置，创建新客户端
             if all([exchange_config.get('api_key'), exchange_config.get('api_secret'), exchange_config.get('passphrase')]):
-                exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+                exchange_type = InstType.SPOT if self.inst_type == "SPOT" else InstType.FUTURES
                 self._reset_and_create_client(exchange_config, exchange_type)
                 
             # 保存配置
@@ -487,7 +487,7 @@ class GridStrategyTab(QWidget):
         self.exchange_combo.currentTextChanged.connect(self.handle_exchange_changed)
         
         # 获取支持当前交易类型的交易所列表
-        exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+        exchange_type = InstType.SPOT if self.inst_type == "SPOT" else InstType.FUTURES
         available_exchanges = self.client_factory.registry.get_available_exchanges(exchange_type)
         
         # 设置交易所选项
@@ -560,7 +560,7 @@ class GridStrategyTab(QWidget):
             # 设置当前交易所
             current_exchange = config.get('current', '').lower()
             if not current_exchange:
-                exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+                exchange_type = InstType.SPOT if self.inst_type == "SPOT" else InstType.FUTURES
                 available_exchanges = self.client_factory.registry.get_available_exchanges(exchange_type)
                 current_exchange = available_exchanges[0] if available_exchanges else "bitget"
                 config['current'] = current_exchange
@@ -582,7 +582,7 @@ class GridStrategyTab(QWidget):
             self.config = config  # 保存整个配置
 
             if all([exchange_config.get('api_key'), exchange_config.get('api_secret'), exchange_config.get('passphrase')]):
-                exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+                exchange_type = InstType.SPOT if self.inst_type == "SPOT" else InstType.FUTURES
                 self._reset_and_create_client(exchange_config, exchange_type)
 
         except Exception as e:
@@ -618,7 +618,7 @@ class GridStrategyTab(QWidget):
                 json.dump(self.config, f, indent=4)
 
             if not auto_save:
-                exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+                exchange_type = InstType.SPOT if self.inst_type == "SPOT" else InstType.FUTURES
                 self._reset_and_create_client(new_config, exchange_type)
 
         except Exception as e:
@@ -626,7 +626,7 @@ class GridStrategyTab(QWidget):
 
     def _create_default_config(self) -> dict:
         """创建默认配置"""
-        exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+        exchange_type = InstType.SPOT if self.inst_type == "SPOT" else InstType.FUTURES
         available_exchanges = self.client_factory.registry.get_available_exchanges(exchange_type)
         default_exchange = available_exchanges[0] if available_exchanges else "bitget"
         

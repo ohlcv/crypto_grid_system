@@ -9,7 +9,7 @@ from datetime import datetime
 from qtpy.QtCore import QObject, Signal
 
 from src.exchange.base_client import (
-    BaseClient, OrderRequest, OrderType, OrderSide, TradeSide
+    BaseClient, InstType, OrderRequest, OrderType, OrderSide, TradeSide
 )
 from src.utils.common.tools import adjust_decimal_places
 from src.utils.common.tools import find_value
@@ -692,18 +692,14 @@ class GridTrader(QObject):
             self.logger.info(f"{self.grid_data.inst_type} {self.grid_data.uid} {self.grid_data.pair} 准备开仓-{level}")
             level_config = self.grid_data.grid_levels[level]
             is_long = self.grid_data.is_long()
-            is_spot = self.grid_data.inst_type == "SPOT"
-
-            # 首先验证投资金额是否满足最小要求
-            # invest_amount = level_config.invest_amount
-            # min_value = self.grid_data.min_trade_value or Decimal('5')
-            # if invest_amount < min_value:
-            #     raise ValueError(f"投资金额 {invest_amount} USDT 小于最小交易额 {min_value} USDT")
+            is_spot = self.grid_data.inst_type == InstType.SPOT
 
             # 计算下单数量
-            if is_spot:
+            if is_spot and is_long:
+                # 现货买入使用USDT金额
                 order_size = float(level_config.invest_amount)
             else:
+                # 现货卖出和合约都使用币数量
                 order_size = float(level_config.invest_amount / self.grid_data.last_price)
 
             # 使用缓存的精度进行处理
@@ -713,17 +709,7 @@ class GridTrader(QObject):
                 rounding=ROUND_HALF_UP
             ))
 
-            # 检查最小交易量/额
-            # min_amount = self.grid_data.min_trade_amount or Decimal('0')
-            # min_value = self.grid_data.min_trade_value or Decimal('5')
-
-            # if Decimal(str(order_size)) < min_amount:
-            #     raise ValueError(f"下单数量 {order_size} 小于最小交易量 {min_amount}")
-
-            # order_value = Decimal(str(order_size)) * Decimal(str(self.grid_data.last_price))
-            # if order_value < min_value:
-            #     raise ValueError(f"下单金额 {order_value} 小于最小交易额 {min_value}")
-            
+            # 打印订单详情日志
             self.logger.debug(f"[GridTrader] 订单详情:")
             self.logger.debug(f"  网格层级: {level}")
             self.logger.debug(f"  方向: {'做多' if is_long else '做空'}")
@@ -734,70 +720,72 @@ class GridTrader(QObject):
 
             # 生成客户端订单ID
             client_order_id = f"grid_{self.grid_data.uid}_{level}_{int(time.time()*1000)}"
-            
-            # 发送订单
-            response = self.client.rest_api.place_order(
-                symbol=self.grid_data.pair.replace('/', ''),
-                size=str(order_size),
-                trade_side="open",
-                side="buy" if is_long else "sell",
-                client_oid=client_order_id
-            )
-            # self.trade_logger.info(f"[GridTrader] 下单结果 - {self.grid_data.uid} - {response}")
-
-            # 处理下单响应
-            if isinstance(response, dict) and response.get('code') == '00000':
-                order_id = response['data']['orderId']
-                self._order_state.set_pending_order(order_id, level)
                 
-                time.sleep(0.5)  # 短暂延迟确保成交明细可查
-
-                # 查询成交明细
-                fills = self.client.rest_api.get_fills(
+            try:
+                # 发送订单
+                response = self.client.rest_api.place_order(
                     symbol=self.grid_data.pair.replace('/', ''),
-                    order_id=order_id
+                    size=str(order_size),
+                    trade_side="open",
+                    side="buy" if is_long else "sell",
+                    client_oid=client_order_id
                 )
-                # self.logger.info(f"[GridTrader] 成交明细响应: {fills}")
 
-                if isinstance(fills, dict) and fills.get('code') == '00000':
-                    # 获取成交列表
-                    if is_spot:
-                        fill_list = fills.get('data', [])
+                # 处理下单响应
+                if isinstance(response, dict) and response.get('code') == '00000':
+                    order_id = response['data']['orderId']
+                    self._order_state.set_pending_order(order_id, level)
+                    
+                    time.sleep(0.5)  # 短暂延迟确保成交明细可查
+
+                    # 查询成交明细
+                    fills = self.client.rest_api.get_fills(
+                        symbol=self.grid_data.pair.replace('/', ''),
+                        order_id=order_id
+                    )
+
+                    if isinstance(fills, dict) and fills.get('code') == '00000':
+                        # 获取成交列表
+                        if is_spot:
+                            fill_list = fills.get('data', [])
+                        else:
+                            fill_list = fills.get('data', {}).get('fillList', [])
+
+                        # 处理成交数据
+                        fill_data = self._process_fills(fill_list, is_spot)
+                        if fill_data:
+                            # 添加订单ID和状态
+                            fill_data['orderId'] = order_id
+                            fill_data['status'] = 'filled'
+                            
+                            self.logger.debug(f"[GridTrader] 汇总数据:")
+                            self.logger.debug(f"  成交均价: {fill_data['filled_price']}")
+                            self.logger.debug(f"  成交数量: {fill_data['filled_amount']}")
+                            self.logger.debug(f"  成交金额: {fill_data['filled_value']}")
+                            self.logger.debug(f"  手续费: {fill_data['fee']}")
+
+                            # 更新网格数据
+                            self.grid_data.update_order_fill(level, fill_data, "open")
+                            self._order_state.clear_pending_order()
+                            self._price_state.reset()
+                        else:
+                            error_msg = "无效的成交数据"
+                            self.error_occurred.emit(self.grid_data.uid, error_msg)
+                            self.stop()
                     else:
-                        fill_list = fills.get('data', {}).get('fillList', [])
-
-                    # 处理成交数据
-                    fill_data = self._process_fills(fill_list, is_spot)
-                    if fill_data:
-                        # 添加订单ID和状态
-                        fill_data['orderId'] = order_id
-                        fill_data['status'] = 'filled'
-                        
-                        self.logger.debug(f"[GridTrader] 汇总数据:")
-                        self.logger.debug(f"  成交均价: {fill_data['filled_price']}")
-                        self.logger.debug(f"  成交数量: {fill_data['filled_amount']}")
-                        self.logger.debug(f"  成交金额: {fill_data['filled_value']}")
-                        self.logger.debug(f"  手续费: {fill_data['fee']}")
-
-                        # 更新网格数据
-                        self.grid_data.update_order_fill(level, fill_data, "open")
-                        self._order_state.clear_pending_order()
-                        self._price_state.reset()
-                    else:
-                        error_msg = "无效的成交数据"
+                        error_msg = f"获取成交明细失败: {fills}"
+                        self.logger.error(f"[GridTrader] {error_msg}")
                         self.error_occurred.emit(self.grid_data.uid, error_msg)
                         self.stop()
-
                 else:
-                    error_msg = f"获取成交明细失败: {fills}"
+                    error_msg = f"下单失败: {response}"
                     self.logger.error(f"[GridTrader] {error_msg}")
                     self.error_occurred.emit(self.grid_data.uid, error_msg)
                     self.stop()
-            else:
-                error_msg = f"下单失败: {response}"
-                self.logger.error(f"[GridTrader] {error_msg}")
-                self.error_occurred.emit(self.grid_data.uid, error_msg)
-                self.stop()
+
+            except Exception as e:
+                self.logger.error(f"下单请求失败: {str(e)}")
+                raise
 
         except Exception as e:
             error_msg = f"下单错误: {str(e)}"
@@ -813,7 +801,7 @@ class GridTrader(QObject):
         try:
             level_config = self.grid_data.grid_levels[level]
             is_long = self.grid_data.is_long()
-            is_spot = self.grid_data.inst_type == "SPOT"
+            is_spot = self.grid_data.inst_type == InstType.SPOT
             self.logger.info(f"{self.grid_data.inst_type} {self.grid_data.uid} {self.grid_data.pair} 准备止盈-{level}")
 
             # 计算下单数量
@@ -960,7 +948,7 @@ class GridTrader(QObject):
 
             # 准备平仓参数
             symbol = self.grid_data.pair.replace('/', '')
-            is_spot = self.grid_data.inst_type == "SPOT"
+            is_spot = self.grid_data.inst_type == InstType.SPOT
             is_long = self.grid_data.is_long()
             
             # 合约平仓

@@ -10,7 +10,7 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import Qt, QTimer, Signal
 
-from src.exchange.base_client import ExchangeType, BaseClient
+from src.exchange.base_client import InstType, BaseClient
 from src.exchange.client_factory import ExchangeClientFactory
 from src.ui.grid.api_config_manager import APIConfigManager
 from src.ui.grid.grid_controls import GridControls
@@ -34,7 +34,7 @@ class GridStrategyTab(QWidget):
     """网格策略Tab页 - 重构后的主类实现"""
     update_ui_signal = Signal(str)  # uid 参数
 
-    def __init__(self, inst_type: ExchangeType, client_factory: ExchangeClientFactory):
+    def __init__(self, inst_type: InstType, client_factory: ExchangeClientFactory):
         super().__init__()
         # 基础配置
         self.inst_type = inst_type  # 直接使用枚举类型
@@ -145,14 +145,22 @@ class GridStrategyTab(QWidget):
             self.api_manager.update_connection_status(status)
 
     @show_error_dialog
-    def _handle_client_created(self, client: BaseClient):
+    def _handle_client_created(self, source_tab_id: str, exchange_type: str, client: BaseClient):
         """处理客户端创建"""
-        print("\n[GridStrategyTab] === Client Created ===")
+        print(f"\n[GridStrategyTab] 收到客户端创建信号 | 来源tab: {source_tab_id} 类型: {exchange_type}")
+        
+        # 严格过滤条件
+        if (source_tab_id != self.tab_id) or (exchange_type != self.inst_type.value):
+            print(f"└─ 忽略非本标签页或类型不匹配的客户端")
+            return
+
+        print(f"├─ 客户端类型: {client.inst_type.name}")
+        print(f"└─ 本标签类型: {self.inst_type.name}")
+
         try:
             # 检查客户端类型是否匹配
-            print("client.inst_type=", client.inst_type, "self.inst_type=", self.inst_type)
             if client.inst_type != self.inst_type:
-                print(f"[GridStrategyTab] 客户端类型不匹配: expected {self.inst_type.name}, got {client.inst_type.name}")
+                print(f"忽略类型不匹配的客户端: {client.inst_type} vs {self.inst_type}")
                 return
 
             # 检查是否是本标签页的客户端
@@ -256,7 +264,7 @@ class GridStrategyTab(QWidget):
                 config.get('passphrase')
             ]):
                 # 创建新客户端
-                exchange_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+                exchange_type =self.inst_type
                 self.exchange_client = self.client_factory.create_client(
                     self.tab_id,
                     self.api_manager.current_exchange.lower(),
@@ -447,21 +455,20 @@ class GridStrategyTab(QWidget):
     @show_error_dialog
     def _handle_strategy_updated(self, uid: str):
         """处理策略更新事件 - 可能在非主线程中调用"""
-        print(f"\n[GridStrategyTab] === 接收到策略更新事件 === {uid}")
-        # 发送信号到主线程
+        # print(f"\n[GridStrategyTab] === 接收到策略更新事件 === {uid}")
         self.update_ui_signal.emit(uid)
 
     @show_error_dialog
     def _update_ui_in_main_thread(self, uid: str):
         """在主线程中更新UI"""
         try:
-            print(f"\n[GridStrategyTab] === 主线程处理策略更新 === {uid}")
+            # print(f"\n[GridStrategyTab] === 主线程处理策略更新 === {uid}")
             grid_data = self.strategy_wrapper.get_strategy_data(uid)
             if grid_data:
-                print(f"[GridStrategyTab] 获取到策略数据: {grid_data.row_dict}")
-                print(f"[GridStrategyTab] 开始更新表格...")
+                # print(f"[GridStrategyTab] 获取到策略数据: {grid_data.row_dict}")
+                # print(f"[GridStrategyTab] 开始更新表格...")
                 self.grid_table.update_strategy_row(uid, grid_data)
-                print(f"[GridStrategyTab] 表格更新完成")
+                # print(f"[GridStrategyTab] 表格更新完成")
             else:
                 print(f"[GridStrategyTab] 未找到策略数据: {uid}")
         except Exception as e:

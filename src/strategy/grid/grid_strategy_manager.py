@@ -7,7 +7,7 @@ import threading
 from datetime import datetime
 from qtpy.QtCore import QObject, Signal
 
-from src.exchange.base_client import BaseClient
+from src.exchange.base_client import BaseClient, InstType
 from src.utils.common.tools import find_value
 from .grid_core import GridData, GridDirection
 from .grid_trader import GridTrader
@@ -27,13 +27,9 @@ class GridStrategyManager(QObject):
         self._data: Dict[str, GridData] = {}  # uid -> GridData
         self._lock = threading.Lock()
 
-    def create_strategy(self, uid: str, pair: str, exchange: str, inst_type: str, is_long: bool = True) -> Optional[GridData]:
-        """创建新策略"""
-        print(f"\n[GridStrategyManager] === 创建新策略 === {uid}")
+    def create_strategy(self, uid: str, pair: str, exchange: str, inst_type: InstType, is_long: bool = True) -> Optional[GridData]:
+        print(f"\n[GridStrategyManager] {inst_type} === 创建新策略 === {uid}")
         print(f"[GridStrategyManager] 交易对: {pair}")
-        # print(f"[GridStrategyManager] 当前线程状态:")
-        # for t in threading.enumerate():
-        #     print(f"  - {t.name} (ID: {t.ident})")
         
         with self._lock:
             if uid in self._data:
@@ -41,36 +37,24 @@ class GridStrategyManager(QObject):
                 return None
 
         try:
-            # 初始化策略数据
             print(f"[GridStrategyManager] 初始化策略数据...")
             grid_data = GridData(uid, pair, exchange, inst_type)
             
-            # 设置方向
-            grid_data.set_direction(is_long=(inst_type == "SPOT" or is_long))
-            grid_data.row_dict["方向"] = "long" if is_long else "short"
+            grid_data.set_direction(is_long=(inst_type == InstType.SPOT or is_long))
+            grid_data.row_dict["方向"] = GridDirection.LONG.name if is_long else GridDirection.SHORT.name
             
-            # 创建策略实例
             print(f"[GridStrategyManager] 创建策略实例...")
             self._data[uid] = grid_data
             self._strategies[uid] = GridTrader(grid_data)
             
             print(f"[GridStrategyManager] 策略实例创建成功: {uid}")
-            # 打印当前线程状态
-            # print("\n[GridStrategyManager] 策略创建后线程状态:")
-            # for t in threading.enumerate():
-            #     print(f"  - {t.name} (ID: {t.ident}, 活跃: {t.is_alive()})")
-                
             return grid_data
             
         except Exception as e:
             print(f"[GridStrategyManager] 创建策略失败: {e}")
             print(f"[GridStrategyManager] 错误详情: {traceback.format_exc()}")
-            
-            # 清理失败的策略数据
             if uid in self._data:
                 del self._data[uid]
-                print(f"[GridStrategyManager] 已清理失败的策略数据: {uid}")
-            
             return None
 
     def stop_strategy(self, uid: str) -> bool:
@@ -208,21 +192,21 @@ class GridStrategyManager(QObject):
             print(f"[GridStrategyManager] 保持原有实现盈亏: {original_profit}")
             
             # 启动策略
-            print(f"[GridStrategyManager] 开始启动策略...")
+            # print(f"[GridStrategyManager] 开始启动策略...")
             if trader.start():
-                print(f"[GridStrategyManager] 策略启动成功，发送启动信号...")
+                # print(f"[GridStrategyManager] 策略启动成功，发送启动信号...")
                 self.strategy_started.emit(uid)
                 
                 # 确保运行状态更新但不影响实现盈亏
-                print(f"[GridStrategyManager] 更新策略状态...")
+                # print(f"[GridStrategyManager] 更新策略状态...")
                 grid_data.total_realized_profit = original_profit
                 grid_data.row_dict["实现盈亏"] = str(original_profit)
                 grid_data.row_dict["运行状态"] = "运行中"
                 
-                print(f"[GridStrategyManager] 发送数据更新信号...")
-                print(f"[GridStrategyManager] 更新前的row_dict: {grid_data.row_dict}")
+                # print(f"[GridStrategyManager] 发送数据更新信号...")
+                # print(f"[GridStrategyManager] 更新前的row_dict: {grid_data.row_dict}")
                 grid_data.data_updated.emit(uid)
-                print(f"[GridStrategyManager] 数据更新信号已发送")
+                # print(f"[GridStrategyManager] 数据更新信号已发送")
                 print(f"[GridStrategyManager] 策略启动完成: {uid}")
                 return True
                 
@@ -251,7 +235,7 @@ class GridStrategyManager(QObject):
             
             # 获取交易对信息
             symbol_normalized = grid_data.pair.replace('/', '')
-            is_spot = grid_data.inst_type == "SPOT"
+            is_spot = grid_data.inst_type == InstType.SPOT
             pair_info = exchange_client.rest_api.get_pairs(symbol=symbol_normalized)
             
             if pair_info.get('code') != '00000':
@@ -320,9 +304,10 @@ class GridStrategyManager(QObject):
                     affected_strategies.append(uid)
 
             if affected_strategies:  # 只在找到相关策略时打印
-                print(f"\n[GridStrategyManager] === 处理市场数据 === {normalized_pair}")
-                print(f"[GridStrategyManager] 原始数据: {data}")
-                print(f"[GridStrategyManager] 行情交易对: {normalized_pair} 找到相关策略: {affected_strategies}")
+                pass
+                # print(f"\n[GridStrategyManager] === 处理市场数据 === {normalized_pair}")
+                # print(f"[GridStrategyManager] 原始数据: {data}")
+                # print(f"[GridStrategyManager] 行情交易对: {normalized_pair} 找到相关策略: {affected_strategies}")
 
             # 只有匹配的交易对且策略在运行时才处理
             for uid in affected_strategies:
@@ -353,7 +338,7 @@ class GridStrategyManager(QObject):
                     
                     grid_data.update_market_data(data)
                     
-                    print(f"[GridStrategyManager] 市场数据更新完成")
+                    # print(f"[GridStrategyManager] 市场数据更新完成")
                     print(f"[GridStrategyManager] 更新后的row_dict: {grid_data.row_dict}")
 
                 except Exception as e:

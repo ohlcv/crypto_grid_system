@@ -9,7 +9,7 @@ from qtpy.QtCore import QObject, Signal
 
 from src.exchange.bingX.bingx_client import BingXClient
 
-from .base_client import BaseClient, ExchangeType
+from .base_client import BaseClient, InstType
 from .bitget.bitget_client import BitgetClient
 from qtpy.QtWidgets import QApplication
 from qtpy.QtCore import QTimer
@@ -110,12 +110,12 @@ class ExchangeValidatorRegistry:
         # 交易所支持类型配置
         self._exchange_support = {
             "bitget": {
-                ExchangeType.SPOT: True,
-                ExchangeType.FUTURES: True
+                InstType.SPOT: True,
+                InstType.FUTURES: True
             },
             "bingx": {
-                ExchangeType.SPOT: False,
-                ExchangeType.FUTURES: True
+                InstType.SPOT: False,
+                InstType.FUTURES: True
             }
         }
         
@@ -133,7 +133,7 @@ class ExchangeValidatorRegistry:
         """获取交易所客户端类"""
         return self._client_classes.get(exchange.lower())
 
-    def get_supported_types(self, exchange: str) -> Dict[ExchangeType, bool]:
+    def get_supported_types(self, exchange: str) -> Dict[InstType, bool]:
         """获取交易所支持的交易类型"""
         return self._exchange_support.get(exchange.lower(), {})
 
@@ -141,7 +141,7 @@ class ExchangeValidatorRegistry:
         """获取所有注册的交易所"""
         return list(self._client_classes.keys())
 
-    def get_available_exchanges(self, inst_type: ExchangeType) -> List[str]:
+    def get_available_exchanges(self, inst_type: InstType) -> List[str]:
         """获取支持指定交易类型的交易所列表"""
         return [
             exchange for exchange, support in self._exchange_support.items()
@@ -150,7 +150,7 @@ class ExchangeValidatorRegistry:
     
 class ExchangeClientFactory(QObject):
     """整合后的客户端工厂"""
-    client_created = Signal(object)
+    client_created = Signal(str, str, object)  # (tab_id, exchange_type, client)
     client_error = Signal(str)
     validation_failed = Signal(str)
     client_status_changed = Signal(str, str)
@@ -158,20 +158,20 @@ class ExchangeClientFactory(QObject):
     def __init__(self):
         super().__init__()
         # 使用组合键来存储客户端
-        self._clients: Dict[str, Dict[ExchangeType, BaseClient]] = {}
-        self._client_threads: Dict[str, Dict[ExchangeType, threading.Thread]] = {} 
-        self._client_status: Dict[str, Dict[ExchangeType, ClientStatus]] = {}
+        self._clients: Dict[str, Dict[InstType, BaseClient]] = {}
+        self._client_threads: Dict[str, Dict[InstType, threading.Thread]] = {} 
+        self._client_status: Dict[str, Dict[InstType, ClientStatus]] = {}
         self._validation_status: Dict[str, bool] = {}
         self._lock = threading.Lock()
         self.registry = ExchangeValidatorRegistry()
 
-    def create_client(self, tab_id: str, exchange: str, api_config: dict, inst_type: ExchangeType) -> Optional[BaseClient]:
+    def create_client(self, tab_id: str, exchange: str, api_config: dict, inst_type: InstType) -> Optional[BaseClient]:
         try:
             with self._lock:
                 # 从注册中心获取配置
                 supported = self.registry.get_supported_types(exchange)
-                if not supported.get(inst_type, False):  # 这里会正确校验交易所支持
-                    raise ValueError(f"{exchange} does not support {inst_type.value}")
+                if inst_type not in supported or not supported[inst_type]:
+                    raise ValueError(f"{exchange}不支持{inst_type.value}")
 
                 client_class = self.registry.get_client_class(exchange)
                 if not client_class:
@@ -228,7 +228,7 @@ class ExchangeClientFactory(QObject):
             self.client_error.emit(f"创建客户端失败: {str(e)}")
             return None
 
-    def destroy_client(self, tab_id: str, inst_type: Optional[ExchangeType] = None):
+    def destroy_client(self, tab_id: str, inst_type: Optional[InstType] = None):
         """销毁客户端实例"""
         with self._lock:
             print(f"开始销毁客户端: {tab_id}")
@@ -252,7 +252,7 @@ class ExchangeClientFactory(QObject):
             else:
                 self._cleanup_tab_data(tab_id)
 
-    def _destroy_specific_client(self, tab_id: str, inst_type: ExchangeType):
+    def _destroy_specific_client(self, tab_id: str, inst_type: InstType):
         """销毁特定的客户端实例"""
         try:
             client = self._clients[tab_id][inst_type]
@@ -305,14 +305,14 @@ class ExchangeClientFactory(QObject):
         if tab_id in self._validation_status:
             del self._validation_status[tab_id]
 
-    def _handle_client_connected(self, tab_id: str, inst_type: ExchangeType, connected: bool):
+    def _handle_client_connected(self, tab_id: str, inst_type: InstType, connected: bool):
         """处理客户端连接状态变化"""
         if not connected:
             if tab_id in self._client_status and inst_type in self._client_status[tab_id]:
                 self._client_status[tab_id][inst_type] = ClientStatus.DISCONNECTED
                 self.client_status_changed.emit(tab_id, ClientStatus.DISCONNECTED.value)
 
-    def get_client(self, tab_id: str, inst_type: Optional[ExchangeType] = None) -> Optional[BaseClient]:
+    def get_client(self, tab_id: str, inst_type: Optional[InstType] = None) -> Optional[BaseClient]:
         """获取客户端实例"""
         with self._lock:
             if tab_id not in self._clients:
@@ -322,7 +322,7 @@ class ExchangeClientFactory(QObject):
             # 如果没有指定类型，返回第一个可用的客户端
             return next(iter(self._clients[tab_id].values())) if self._clients[tab_id] else None
 
-    def _run_client(self, client: BaseClient, tab_id: str, inst_type: ExchangeType):
+    def _run_client(self, client: BaseClient, tab_id: str, inst_type: InstType):
         """运行客户端连接"""
         try:
             # 更新状态为连接中
@@ -370,7 +370,7 @@ class ExchangeClientFactory(QObject):
             if tab_id in self._client_status and inst_type in self._client_status[tab_id]:
                 self._client_status[tab_id][inst_type] = ClientStatus.READY
                 self.client_status_changed.emit(tab_id, ClientStatus.READY.value)
-            self.client_created.emit(client)
+            self.client_created.emit(tab_id, inst_type.value, client)
             
         except Exception as e:
             if tab_id in self._client_status and inst_type in self._client_status[tab_id]:
@@ -426,7 +426,7 @@ class ExchangeClientFactory(QObject):
         # except Exception as e:
         #     print(f"强制关闭连接时出错: {str(e)}")
 
-    def get_supported_exchanges(self, inst_type: ExchangeType = None) -> list:
+    def get_supported_exchanges(self, inst_type: InstType = None) -> list:
         """获取支持的交易所列表
         
         Args:

@@ -8,7 +8,7 @@ from qtpy.QtWidgets import (
 from qtpy.QtCore import Qt, Signal, QRegularExpression
 from qtpy.QtGui import QRegularExpressionValidator, QColor
 
-from src.exchange.base_client import ExchangeType
+from src.exchange.base_client import InstType
 
 class GridControls(QWidget):
     """网格策略控制组件"""
@@ -20,7 +20,7 @@ class GridControls(QWidget):
     position_mode_changed = Signal(bool)  # is_long
     dialog_requested = Signal(str, str, str)
 
-    def __init__(self, inst_type: ExchangeType):
+    def __init__(self, inst_type: InstType):
         super().__init__()
         self.inst_type = inst_type
         self.client = None
@@ -64,7 +64,7 @@ class GridControls(QWidget):
         layout.addWidget(self.position_mode_button)
         
         # 现货模式下隐藏多空切换按钮
-        if self.inst_type == "SPOT":
+        if self.inst_type == InstType.SPOT:
             self.position_mode_button.hide()
 
         # === 批量操作按钮 ===
@@ -103,9 +103,12 @@ class GridControls(QWidget):
             self.position_mode_button.setStyleSheet(
                 "QPushButton { "
                 "   background-color: #dc3545; "
-                "   color: white; "
+                "   color: #00FFFF; "
                 "   border-radius: 4px; "
                 "   padding: 5px; "
+                "   min-width: 0; "
+                "   width: auto; "
+                "   height: 24; "
                 "} "
                 "QPushButton:hover { background-color: #c82333; }"
             )
@@ -113,9 +116,12 @@ class GridControls(QWidget):
             self.position_mode_button.setStyleSheet(
                 "QPushButton { "
                 "   background-color: #28a745; "
-                "   color: white; "
+                "   color: #00FFFF; "
                 "   border-radius: 4px; "
                 "   padding: 5px; "
+                "   min-width: 0; "
+                "   width: auto; "
+                "   height: 24; "
                 "} "
                 "QPushButton:hover { background-color: #218838; }"
             )
@@ -123,7 +129,7 @@ class GridControls(QWidget):
     def _handle_position_mode_changed(self):
         """处理多空模式切换"""
         # 现货模式下禁止切换到做空
-        if self.inst_type == "SPOT" and self.position_mode_button.isChecked():
+        if self.inst_type == InstType.SPOT and self.position_mode_button.isChecked():
             self.position_mode_button.setChecked(False)
             self.dialog_requested.emit("warning", "警告", "现货模式不支持做空")
             return
