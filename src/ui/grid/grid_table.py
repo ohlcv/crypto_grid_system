@@ -33,7 +33,7 @@ class GridTable(QTableWidget):
         {"name": "运行状态", "type": "text", "editable": False, "width": 100},
         {"name": "当前层数", "type": "text", "editable": False, "width": 100},
         {"name": "最后时间", "type": "text", "editable": False, "width": 100},
-        {"name": "时间戳", "type": "text", "editable": False, "width": 110},
+        {"name": "时间戳", "type": "text", "editable": False, "width": 120},
         {"name": "最后价格", "type": "text", "editable": False, "width": 100},
         {"name": "开仓触发价", "type": "text", "editable": False, "width": 110},
         {"name": "止盈触发价", "type": "text", "editable": False, "width": 110},

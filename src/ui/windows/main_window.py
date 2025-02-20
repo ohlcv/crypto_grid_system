@@ -76,7 +76,7 @@ class MainWindow(QMainWindow):
         self.main_tab_widget.addTab(welcome_widget, "使用指南")
         
         # 延迟3秒后添加并连接合约网格标签页
-        # QTimer.singleShot(3000, self.add_futures_tab)
+        QTimer.singleShot(1000, self.add_futures_tab)
 
     def add_futures_tab(self):
         """延迟添加合约网格标签页"""
