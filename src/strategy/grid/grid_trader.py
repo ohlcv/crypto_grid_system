@@ -564,8 +564,15 @@ class GridTrader(QObject):
             return rebound_ratio >= rebound
 
     @error_handler()
-    def _process_fills(self, fills_data: list, is_spot: bool) -> dict:
-        """处理成交数据"""
+    def _process_fills(self, fills_data: list, is_spot: bool, max_retries: int = 3) -> dict:
+        """处理成交数据
+        Args:
+            fills_data: 成交数据列表
+            is_spot: 是否现货
+            max_retries: 最大重试次数
+        Returns:
+            dict: 处理后的成交数据汇总
+        """
         self.logger.info(f"{self.grid_data.inst_type} {self.grid_data.uid} {self.grid_data.pair} 处理成交数据...")
         total_price = Decimal('0')
         total_size = Decimal('0')
@@ -575,8 +582,31 @@ class GridTrader(QObject):
 
         reference_price = self.grid_data.last_price
 
+        # 如果成交列表为空且还有重试次数，等待后重试
+        retry_count = 0
+        while not fills_data and retry_count < max_retries:
+            retry_count += 1
+            self.logger.info(f"成交数据为空，第{retry_count}次重试...")
+            time.sleep(1)  # 等待1秒
+            
+            # 重新查询成交明细
+            fills = self.client.rest_api.get_fills(
+                symbol=self.grid_data.pair.replace('/', ''),
+                order_id=self._order_state.pending_order_id
+            )
+            
+            if isinstance(fills, dict) and fills.get('code') == '00000':
+                if is_spot:
+                    fills_data = fills.get('data', [])
+                else:
+                    fills_data = fills.get('data', {}).get('fillList', [])
+            
+            if fills_data:
+                self.logger.info("重试成功，获取到成交数据")
+                break
+        
         if not fills_data:
-            self.logger.info("not fills_data")
+            self.logger.error("重试耗尽，仍未获取到成交数据")
             return None
                 
         # self.logger.info(f"fills_data: {fills_data}")
