@@ -37,7 +37,7 @@ class GridStrategyTab(QWidget):
     def __init__(self, inst_type: str, client_factory: ExchangeClientFactory):
         super().__init__()
         # 基础配置
-        self.inst_type = inst_type
+        self.inst_type = ExchangeType.SPOT if inst_type == "SPOT" else ExchangeType.FUTURES
         self.client_factory = client_factory
         self.tab_id = str(uuid.uuid4())
         self.exchange_client: Optional[BaseClient] = None
@@ -146,24 +146,67 @@ class GridStrategyTab(QWidget):
 
     @show_error_dialog
     def _handle_client_created(self, client: BaseClient):
-        """处理客户端创建完成"""
-        # 设置客户端到 grid_controls
-        self.grid_controls.set_client(client)
-        self.exchange_client = client
-        
-        # 处理 WebSocket 状态信号
-        if hasattr(client, 'ws_status_changed'):
-            # print(f"[GridStrategyTab] 连接WebSocket状态信号 - client: {client}")
-            def handle_ws_status(is_public: bool, connected: bool):
-                print(f"[GridStrategyTab] 收到WebSocket状态更新 - {'公有' if is_public else '私有'}: {'已连接' if connected else '未连接'}")
-                self.api_manager.update_ws_status(is_public, connected)
+        """处理客户端创建"""
+        print("\n[GridStrategyTab] === Client Created ===")
+        try:
+            # 检查客户端类型是否匹配
+            if client.inst_type != (ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES):
+                print(f"[GridStrategyTab] 客户端类型不匹配: expected {self.inst_type}, got {client.inst_type.value}")
+                return
+
+            # 检查是否是本标签页的客户端
+            tab_client = self.client_factory.get_client(self.tab_id, client.inst_type)
+            if client is not tab_client:
+                print(f"[GridStrategyTab] 不是当前标签页的客户端")
+                return
+                
+            self.exchange_client = client
+            print(f"[GridStrategyTab] 客户端设置完成: {client.inst_type.value}")
+            self._connect_client_signals(client)
             
-            client.ws_status_changed.connect(handle_ws_status)
-            
-        # 连接市场数据处理
-        client.tick_received.connect(
-            lambda pair, data: self.strategy_wrapper.process_market_data(pair, data)
-        )
+            # 更新连接状态 - 修改这里
+            ws_status = client.get_ws_status()
+            self.api_manager.update_connection_status("就绪" if client.is_connected else "未连接")
+            self.api_manager.update_ws_status(True, ws_status.get('public', False))
+            self.api_manager.update_ws_status(False, ws_status.get('private', False))
+
+        except Exception as e:
+            print(f"[GridStrategyTab] 客户端创建处理错误: {e}")
+            print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
+            self.show_error_message(f"客户端创建处理失败: {str(e)}")
+
+    def _connect_client_signals(self, client: BaseClient):
+        """连接客户端信号"""
+        try:
+            # 断开现有连接(如果有)
+            try:
+                client.tick_received.disconnect()
+            except TypeError:
+                pass
+            try:
+                client.connection_status.disconnect()
+            except TypeError:
+                pass
+            try:
+                client.error_occurred.disconnect()
+            except TypeError:
+                pass
+
+            # 连接新信号
+            client.tick_received.connect(self.strategy_wrapper.process_market_data)
+            client.connection_status.connect(self.api_manager.update_connection_status)
+            client.error_occurred.connect(self.show_error_message)
+
+            # 如果有ws状态信号则连接
+            if hasattr(client, 'ws_status_changed'):
+                client.ws_status_changed.connect(self._handle_ws_status_changed)
+
+            print(f"[GridStrategyTab] 客户端信号连接完成: {client.inst_type.value}")
+
+        except Exception as e:
+            print(f"[GridStrategyTab] 连接客户端信号失败: {e}")
+            print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
+            self.show_error_message(f"连接客户端信号失败: {str(e)}")
 
     @show_error_dialog
     def _handle_ws_status_changed(self, is_public: bool, connected: bool):
@@ -457,19 +500,36 @@ class GridStrategyTab(QWidget):
             grid_data.row_dict["运行状态"] = "已停止"
             self.grid_table.update_strategy_row(uid, grid_data)
 
+    @show_error_dialog
     def check_client_status(self) -> bool:
         """检查交易所客户端状态"""
-        if not self.exchange_client or not self.exchange_client.is_connected:
-            self.show_error_message("交易所客户端未连接，请检查网络连接！")
+        if not self.exchange_client:
+            self.show_error_message("交易所客户端未连接!")
             return False
             
+        # 验证客户端类型
+        expected_type = ExchangeType.SPOT if self.inst_type == "SPOT" else ExchangeType.FUTURES
+        if self.exchange_client.inst_type != expected_type:
+            self.show_error_message(f"交易所客户端类型不匹配: 预期 {expected_type.value}, 实际 {self.exchange_client.inst_type.value}")
+            return False
+            
+        # 验证是否是本标签页的客户端  
+        tab_client = self.client_factory.get_client(self.tab_id, expected_type)
+        if self.exchange_client is not tab_client:
+            self.show_error_message("客户端实例不属于当前标签页!")
+            return False
+
+        if not self.exchange_client.is_connected:
+            self.show_error_message("交易所客户端未连接，请检查网络连接！")
+            return False
+                
         ws_status = self.exchange_client.get_ws_status()
         if not ws_status.get("public") or not ws_status.get("private"):
             self.show_error_message(
                 "WebSocket连接不完整，请确保公共和私有WebSocket均已连接！"
             )
             return False
-            
+                
         return True
 
     def show_error_message(self, message: str):

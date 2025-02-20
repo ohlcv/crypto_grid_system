@@ -83,17 +83,23 @@ class MainWindow(QMainWindow):
                 print("✅ 现货网格标签页加载成功")
                 # 立即连接现货
                 self.spot_tab._auto_connect_exchange()
+            else:
+                print("❌ 没有交易所支持现货交易")
         except Exception as e:
             print(f"❌ 现货网格标签页加载失败: {str(e)}")
 
     def add_futures_tab(self):
-        """延迟添加合约网格标签页"""
+        """添加合约网格标签页"""
         try:
-            self.futures_tab = GridStrategyTab("FUTURES", self.client_factory)
-            self.grid_tab_widget.addTab(self.futures_tab, "合约网格")
-            print("✅ 合约网格标签页加载成功")
-            # 添加完立即自动连接
-            self.futures_tab._auto_connect_exchange()
+            inst_type = ExchangeType.FUTURES
+            if self.client_factory.get_supported_exchanges(inst_type):
+                self.futures_tab = GridStrategyTab("FUTURES", self.client_factory)
+                self.grid_tab_widget.addTab(self.futures_tab, "合约网格")
+                print("✅ 合约网格标签页加载成功")
+                # 添加完立即自动连接
+                self.futures_tab._auto_connect_exchange()
+            else:
+                print("❌ 没有交易所支持合约交易")
         except Exception as e:
             print(f"❌ 合约网格标签页加载失败: {str(e)}")
 

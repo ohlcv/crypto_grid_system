@@ -153,21 +153,181 @@ class ExchangeClientFactory(QObject):
     client_created = Signal(object)
     client_error = Signal(str)
     validation_failed = Signal(str)
-    client_status_changed = Signal(str, str)  # 添加这个信号声明
+    client_status_changed = Signal(str, str)
 
     def __init__(self):
         super().__init__()
-        self._clients: Dict[str, BaseClient] = {}
-        self._client_threads: Dict[str, threading.Thread] = {}
-        self._client_status: Dict[str, ClientStatus] = {}
-        self._validation_status: Dict[str, bool] = {}  # 每个tab_id的验证状态
+        # 使用组合键来存储客户端
+        self._clients: Dict[str, Dict[ExchangeType, BaseClient]] = {}
+        self._client_threads: Dict[str, Dict[ExchangeType, threading.Thread]] = {} 
+        self._client_status: Dict[str, Dict[ExchangeType, ClientStatus]] = {}
+        self._validation_status: Dict[str, bool] = {}
         self._lock = threading.Lock()
         self.registry = ExchangeValidatorRegistry()
 
-    def _run_client(self, client: BaseClient, tab_id: str):
+    def create_client(self, tab_id: str, exchange: str, api_config: dict, inst_type: ExchangeType) -> Optional[BaseClient]:
+        try:
+            with self._lock:
+                # 从注册中心获取配置
+                if not self.registry.get_supported_types(exchange).get(inst_type, False):
+                    raise ValueError(f"{exchange} does not support {inst_type.value}")
+
+                client_class = self.registry.get_client_class(exchange)
+                if not client_class:
+                    raise ValueError(f"Unsupported exchange: {exchange}")
+
+                # 初始化tab_id的存储结构(如果不存在)
+                if tab_id not in self._clients:
+                    self._clients[tab_id] = {}
+                    self._client_threads[tab_id] = {}
+                    self._client_status[tab_id] = {}
+
+                # 如果已存在相同类型的客户端，先销毁它
+                if inst_type in self._clients[tab_id]:
+                    self.destroy_client(tab_id, inst_type)
+                
+                # 创建客户端
+                client = client_class(
+                    api_key=api_config.get('api_key', ''),
+                    api_secret=api_config.get('api_secret', ''),
+                    passphrase=api_config.get('passphrase', ''),
+                    inst_type=inst_type
+                )
+                
+                # 设置初始状态
+                self._clients[tab_id][inst_type] = client
+                self._client_status[tab_id][inst_type] = ClientStatus.INITIALIZING
+                self.client_status_changed.emit(tab_id, ClientStatus.INITIALIZING.value)
+                
+                # 连接客户端信号
+                client.connection_status.connect(
+                    lambda connected: self._handle_client_connected(tab_id, inst_type, connected)
+                )
+                
+                # 添加 WebSocket 状态变化信号连接
+                if hasattr(client, 'ws_status_changed'):
+                    print(f"[ExchangeClientFactory] 连接WebSocket状态信号 - tab_id: {tab_id}")
+                    client.ws_status_changed.connect(
+                        lambda is_public, connected, tid=tab_id: self._forward_ws_status_to_ui(tid, is_public, connected)
+                    )
+
+                # 启动连接线程
+                thread = threading.Thread(
+                    target=self._run_client,
+                    args=(client, tab_id, inst_type),
+                    name=f"Exchange-{exchange}-{tab_id}-{inst_type.value}",
+                    daemon=True
+                )
+                self._client_threads[tab_id][inst_type] = thread
+                thread.start()
+                
+                return client
+                
+        except Exception as e:
+            self.client_error.emit(f"创建客户端失败: {str(e)}")
+            return None
+
+    def destroy_client(self, tab_id: str, inst_type: Optional[ExchangeType] = None):
+        """销毁客户端实例"""
+        with self._lock:
+            print(f"开始销毁客户端: {tab_id}")
+            
+            if tab_id not in self._clients:
+                return
+
+            if inst_type:
+                # 销毁特定类型的客户端
+                if inst_type in self._clients[tab_id]:
+                    self._destroy_specific_client(tab_id, inst_type)
+            else:
+                # 销毁该标签页的所有客户端
+                for type_key in list(self._clients[tab_id].keys()):
+                    self._destroy_specific_client(tab_id, type_key)
+
+            # 如果tab_id下没有任何客户端了，清理这个tab_id
+            if inst_type:
+                if not self._clients[tab_id]:
+                    self._cleanup_tab_data(tab_id)
+            else:
+                self._cleanup_tab_data(tab_id)
+
+    def _destroy_specific_client(self, tab_id: str, inst_type: ExchangeType):
+        """销毁特定的客户端实例"""
+        try:
+            client = self._clients[tab_id][inst_type]
+            
+            # 先尝试正常断开
+            print(f"尝试正常断开连接: {tab_id} - {inst_type.value}")
+            force_quit = True
+            
+            def try_disconnect():
+                nonlocal force_quit
+                try:
+                    client.disconnect()
+                    force_quit = False
+                except:
+                    pass
+            
+            # 在新线程中尝试断开，最多等待1秒
+            disconnect_thread = threading.Thread(target=try_disconnect)
+            disconnect_thread.daemon = True
+            disconnect_thread.start()
+            disconnect_thread.join(timeout=1.0)
+            
+            # 如果正常断开失败，强制关闭
+            if force_quit:
+                print(f"正常断开失败，强制关闭连接: {tab_id} - {inst_type.value}")
+                self._force_close_client(client)
+            
+            # 从字典中删除引用
+            del self._clients[tab_id][inst_type]
+            
+            # 删除线程引用
+            if inst_type in self._client_threads[tab_id]:
+                del self._client_threads[tab_id][inst_type]
+            
+            # 删除状态引用
+            if inst_type in self._client_status[tab_id]:
+                del self._client_status[tab_id][inst_type]
+                
+        except Exception as e:
+            print(f"销毁客户端时出错: {str(e)}")
+
+    def _cleanup_tab_data(self, tab_id: str):
+        """清理标签页相关的所有数据"""
+        if tab_id in self._clients:
+            del self._clients[tab_id]
+        if tab_id in self._client_threads:
+            del self._client_threads[tab_id]
+        if tab_id in self._client_status:
+            del self._client_status[tab_id]
+        if tab_id in self._validation_status:
+            del self._validation_status[tab_id]
+
+    def _handle_client_connected(self, tab_id: str, inst_type: ExchangeType, connected: bool):
+        """处理客户端连接状态变化"""
+        if not connected:
+            if tab_id in self._client_status and inst_type in self._client_status[tab_id]:
+                self._client_status[tab_id][inst_type] = ClientStatus.DISCONNECTED
+                self.client_status_changed.emit(tab_id, ClientStatus.DISCONNECTED.value)
+
+    def get_client(self, tab_id: str, inst_type: Optional[ExchangeType] = None) -> Optional[BaseClient]:
+        """获取客户端实例"""
+        with self._lock:
+            if tab_id not in self._clients:
+                return None
+            if inst_type:
+                return self._clients[tab_id].get(inst_type)
+            # 如果没有指定类型，返回第一个可用的客户端
+            return next(iter(self._clients[tab_id].values())) if self._clients[tab_id] else None
+
+    def _run_client(self, client: BaseClient, tab_id: str, inst_type: ExchangeType):
+        """运行客户端连接"""
         try:
             # 更新状态为连接中
-            self._update_status(tab_id, ClientStatus.CONNECTING)
+            if tab_id in self._client_status and inst_type in self._client_status[tab_id]:
+                self._client_status[tab_id][inst_type] = ClientStatus.CONNECTING
+                self.client_status_changed.emit(tab_id, ClientStatus.CONNECTING.value)
             
             # 连接客户端
             client.connect()
@@ -184,18 +344,17 @@ class ExchangeClientFactory(QObject):
             time.sleep(1)  # 给WebSocket一些时间完成连接
             
             # 立即进行验证
-            self._update_status(tab_id, ClientStatus.VALIDATING)
+            if tab_id in self._client_status and inst_type in self._client_status[tab_id]:
+                self._client_status[tab_id][inst_type] = ClientStatus.VALIDATING
+                self.client_status_changed.emit(tab_id, ClientStatus.VALIDATING.value)
+                
             validator = self.registry.get_validator(client.exchange)
             if validator:
                 print(f"[ExchangeClientFactory] 开始验证 {client.inst_type.value} 账户")
                 if not validator.validate_account(client):
-                    print(f"[ExchangeClientFactory] {client.inst_type.value} 账户验证失败")
-                    self._update_status(tab_id, ClientStatus.FAILED)
-                    # 修改这里:添加更详细的错误信息
-                    validation_error = (
-                        "账户验证失败: 您不是邀请用户！"
-                    )
-                    self.validation_failed.emit(validation_error)
+                    if tab_id in self._client_status and inst_type in self._client_status[tab_id]:
+                        self._client_status[tab_id][inst_type] = ClientStatus.FAILED
+                    self.validation_failed.emit("账户验证失败，请使用邀请链接注册后再使用！")
                     return
                 print(f"[ExchangeClientFactory] {client.inst_type.value} 账户验证成功")
                 self._validation_status[tab_id] = True
@@ -207,68 +366,19 @@ class ExchangeClientFactory(QObject):
                     client.ws_status_changed.emit(False, ws_status.get('private', False))
                         
             # 验证成功,更新状态为就绪        
-            self._update_status(tab_id, ClientStatus.READY)
+            if tab_id in self._client_status and inst_type in self._client_status[tab_id]:
+                self._client_status[tab_id][inst_type] = ClientStatus.READY
+                self.client_status_changed.emit(tab_id, ClientStatus.READY.value)
             self.client_created.emit(client)
             
         except Exception as e:
-            self._update_status(tab_id, ClientStatus.FAILED)
+            if tab_id in self._client_status and inst_type in self._client_status[tab_id]:
+                self._client_status[tab_id][inst_type] = ClientStatus.FAILED
             self.client_error.emit(str(e))
         finally:
-            if self._client_status.get(tab_id) == ClientStatus.FAILED:
-                self.destroy_client(tab_id)
-
-    def create_client(self, tab_id: str, exchange: str, api_config: dict, inst_type: ExchangeType) -> Optional[BaseClient]:
-        try:
-            with self._lock:
-                # 从注册中心获取配置
-                if not self.registry.get_supported_types(exchange).get(inst_type, False):
-                    raise ValueError(f"{exchange} does not support {inst_type.value}")
-
-                client_class = self.registry.get_client_class(exchange)
-                if not client_class:
-                    raise ValueError(f"Unsupported exchange: {exchange}")
-                
-                # 创建客户端
-                client = client_class(
-                    api_key=api_config.get('api_key', ''),
-                    api_secret=api_config.get('api_secret', ''),
-                    passphrase=api_config.get('passphrase', ''),
-                    inst_type=inst_type
-                )
-                
-                # 设置初始状态
-                self._clients[tab_id] = client
-                self._client_status[tab_id] = ClientStatus.INITIALIZING
-                self.client_status_changed.emit(tab_id, ClientStatus.INITIALIZING.value)
-                
-                # 连接客户端信号
-                client.connection_status.connect(
-                    lambda connected: self._handle_client_connected(tab_id, connected)
-                )
-                
-                # 添加 WebSocket 状态变化信号连接
-                if hasattr(client, 'ws_status_changed'):
-                    print(f"[ExchangeClientFactory] 连接WebSocket状态信号 - tab_id: {tab_id}")
-                    # 使用 lambda 捕获 tab_id
-                    client.ws_status_changed.connect(
-                        lambda is_public, connected, tid=tab_id: self._forward_ws_status_to_ui(tid, is_public, connected)
-                    )
-
-                # 启动连接线程
-                thread = threading.Thread(
-                    target=self._run_client,
-                    args=(client, tab_id),
-                    name=f"Exchange-{exchange}-{tab_id}",
-                    daemon=True
-                )
-                self._client_threads[tab_id] = thread
-                thread.start()
-                
-                return client
-                
-        except Exception as e:
-            self.client_error.emit(f"创建客户端失败: {str(e)}")
-            return None
+            if tab_id in self._client_status and inst_type in self._client_status[tab_id]:
+                if self._client_status[tab_id][inst_type] == ClientStatus.FAILED:
+                    self.destroy_client(tab_id, inst_type)
 
     def _forward_ws_status_to_ui(self, tab_id: str, is_public: bool, connected: bool):
         """转发 WebSocket 状态到 UI"""
@@ -284,11 +394,6 @@ class ExchangeClientFactory(QObject):
         with self._lock:
             self._client_status[tab_id] = status
             self.client_status_changed.emit(tab_id, status.value)
-
-    def _handle_client_connected(self, tab_id: str, connected: bool):
-        """处理客户端连接状态变化"""
-        if not connected:
-            self._update_status(tab_id, ClientStatus.DISCONNECTED)
 
     def _force_close_client(self, client):
         """强制关闭客户端的所有连接"""
@@ -320,59 +425,6 @@ class ExchangeClientFactory(QObject):
         # except Exception as e:
         #     print(f"强制关闭连接时出错: {str(e)}")
 
-    def destroy_client(self, tab_id: str) -> None:
-        """销毁客户端实例"""
-        with self._lock:
-            print(f"开始销毁客户端: {tab_id}")
-            
-            # 获取客户端和线程实例
-            client = self._clients.get(tab_id)
-            thread = self._client_threads.get(tab_id)
-            
-            if client:
-                # try:
-                # 先尝试正常断开
-                print("尝试正常断开连接")
-                force_quit = True
-                
-                def try_disconnect():
-                    nonlocal force_quit
-                    try:
-                        client.disconnect()
-                        force_quit = False
-                    except:
-                        pass
-                
-                # 在新线程中尝试断开，最多等待1秒
-                disconnect_thread = threading.Thread(target=try_disconnect)
-                disconnect_thread.daemon = True
-                disconnect_thread.start()
-                disconnect_thread.join(timeout=1.0)
-                
-                # 如果正常断开失败，强制关闭
-                if force_quit:
-                    print("正常断开失败，强制关闭连接")
-                    self._force_close_client(client)
-                
-                # 从字典中删除引用
-                if tab_id in self._clients:
-                    del self._clients[tab_id]
-                    # print(f"已删除客户端引用: {tab_id}")
-                    
-                # except Exception as e:
-                #     print(f"销毁客户端时出错: {str(e)}")
-            
-            if thread:
-                # try:
-                # print(f"清理线程: {tab_id}")
-                if tab_id in self._client_threads:
-                    del self._client_threads[tab_id]
-                    # print(f"已删除线程引用: {tab_id}")
-                # except Exception as e:
-                #     print(f"清理线程时出错: {str(e)}")
-            
-            print(f"客户端销毁完成: {tab_id}")
-
     def get_supported_exchanges(self, inst_type: ExchangeType = None) -> list:
         """获取支持的交易所列表
         
@@ -386,16 +438,3 @@ class ExchangeClientFactory(QObject):
             exchange for exchange, support in self.registry._exchange_support.items()
             if support.get(inst_type, False)
         ]
-    
-    def get_client(self, tab_id: str) -> Optional[BaseClient]:
-        """
-        获取客户端实例
-        
-        Args:
-            tab_id: 标签页ID
-            
-        Returns:
-            BaseClient实例，如果不存在则返回None
-        """
-        with self._lock:
-            return self._clients.get(tab_id)
