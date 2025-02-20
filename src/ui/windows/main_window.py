@@ -27,6 +27,10 @@ class MainWindow(QMainWindow):
         
         # 创建工厂实例
         self.client_factory = ExchangeClientFactory()
+        # 连接验证失败信号（只连接一次）
+        self.client_factory.validation_failed.connect(
+            lambda msg: QMessageBox.critical(self, "验证失败", msg)
+        )
         
         # 初始化UI组件（但还不设置主题和图标）
         self.init_ui_components()
@@ -57,16 +61,7 @@ class MainWindow(QMainWindow):
         grid_strategy_layout.addWidget(self.grid_tab_widget)
         
         # 添加现货网格标签页
-        inst_type = ExchangeType.SPOT
-        if self.client_factory.get_supported_exchanges(inst_type):
-            try:
-                self.spot_tab = GridStrategyTab("SPOT", self.client_factory)
-                self.grid_tab_widget.addTab(self.spot_tab, "现货网格")
-                print("✅ 现货网格标签页加载成功")
-                # 立即连接现货
-                QTimer.singleShot(100, self.spot_tab._auto_connect_exchange)
-            except Exception as e:
-                print(f"❌ 现货网格标签页加载失败: {str(e)}")
+        QTimer.singleShot(100, self.add_spot_tab)
         
         # 将网格策略页面添加到主标签页
         self.main_tab_widget.addTab(grid_strategy_widget, "网格策略")
@@ -75,8 +70,21 @@ class MainWindow(QMainWindow):
         welcome_widget = WelcomePage()
         self.main_tab_widget.addTab(welcome_widget, "使用指南")
         
-        # 延迟3秒后添加并连接合约网格标签页
-        QTimer.singleShot(1000, self.add_futures_tab)
+        # 延迟添加并连接合约网格标签页
+        QTimer.singleShot(2000, self.add_futures_tab)
+
+    def add_spot_tab(self):
+        """添加现货网格标签页"""
+        try:
+            inst_type = ExchangeType.SPOT
+            if self.client_factory.get_supported_exchanges(inst_type):
+                self.spot_tab = GridStrategyTab("SPOT", self.client_factory)
+                self.grid_tab_widget.addTab(self.spot_tab, "现货网格")
+                print("✅ 现货网格标签页加载成功")
+                # 立即连接现货
+                self.spot_tab._auto_connect_exchange()
+        except Exception as e:
+            print(f"❌ 现货网格标签页加载失败: {str(e)}")
 
     def add_futures_tab(self):
         """延迟添加合约网格标签页"""

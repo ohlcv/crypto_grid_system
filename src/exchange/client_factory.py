@@ -189,8 +189,13 @@ class ExchangeClientFactory(QObject):
             if validator:
                 print(f"[ExchangeClientFactory] 开始验证 {client.inst_type.value} 账户")
                 if not validator.validate_account(client):
+                    print(f"[ExchangeClientFactory] {client.inst_type.value} 账户验证失败")
                     self._update_status(tab_id, ClientStatus.FAILED)
-                    self.validation_failed.emit("账户验证失败，请使用邀请链接注册后再使用！")
+                    # 修改这里:添加更详细的错误信息
+                    validation_error = (
+                        "账户验证失败: 您不是邀请用户！"
+                    )
+                    self.validation_failed.emit(validation_error)
                     return
                 print(f"[ExchangeClientFactory] {client.inst_type.value} 账户验证成功")
                 self._validation_status[tab_id] = True
