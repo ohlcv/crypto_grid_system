@@ -38,12 +38,16 @@ class GridTable(QTableWidget):
         {"name": "开仓触发价", "type": "text", "editable": False, "width": 110},
         {"name": "止盈触发价", "type": "text", "editable": False, "width": 110},
         # {"name": "尾单价格", "type": "text", "editable": False, "width": 100},
+        {"name": "均价止盈触发价", "type": "text", "editable": False, "width": 100},
+        {"name": "均价止损触发价", "type": "text", "editable": False, "width": 100},
         {"name": "持仓均价", "type": "text", "editable": False, "width": 100},
+        {"name": "均价止盈", "type": "text", "editable": False, "width": 100},
+        {"name": "均价止损", "type": "text", "editable": False, "width": 100},
+        {"name": "总体止盈", "type": "text", "editable": False, "width": 100},
+        {"name": "总体止损", "type": "text", "editable": False, "width": 100},
         {"name": "持仓价值", "type": "text", "editable": False, "width": 100},
         {"name": "持仓盈亏", "type": "text", "editable": False, "width": 100},
         {"name": "实现盈亏", "type": "text", "editable": False, "width": 100},
-        {"name": "总体止盈", "type": "text", "editable": False, "width": 100},
-        {"name": "总体止损", "type": "text", "editable": False, "width": 100},
         {"name": "交易所", "type": "text", "editable": False, "width": 100},
         {"name": "标识符", "type": "text", "editable": False, "width": 100}
     ]

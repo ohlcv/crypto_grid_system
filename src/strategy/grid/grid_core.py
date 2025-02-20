@@ -15,6 +15,70 @@ from decimal import Decimal
 from typing import Optional
 
 
+class AvgPriceTakeProfitConfig:
+    """均价止盈配置"""
+    def __init__(self):
+        self.enabled: bool = False  # 是否启用
+        self.profit_percent: Optional[Decimal] = None  # 止盈百分比
+
+    def enable(self, profit_percent: Decimal) -> None:
+        """启用均价止盈"""
+        self.enabled = True
+        self.profit_percent = profit_percent
+
+    def disable(self) -> None:
+        """禁用均价止盈"""
+        self.enabled = False
+        self.profit_percent = None
+
+    def to_dict(self) -> dict:
+        """转换为字典"""
+        return {
+            'enabled': self.enabled,
+            'profit_percent': float(self.profit_percent) if self.profit_percent else None
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'AvgPriceTakeProfitConfig':
+        """从字典创建实例"""
+        instance = cls()
+        instance.enabled = data.get('enabled', False)
+        profit_percent = data.get('profit_percent')
+        instance.profit_percent = Decimal(str(profit_percent)) if profit_percent is not None else None
+        return instance
+
+class AvgPriceStopLossConfig:
+    """均价止损配置"""
+    def __init__(self):
+        self.enabled: bool = False  # 是否启用
+        self.loss_percent: Optional[Decimal] = None  # 止损百分比
+
+    def enable(self, loss_percent: Decimal) -> None:
+        """启用均价止损"""
+        self.enabled = True
+        self.loss_percent = abs(loss_percent)  # 确保为正数
+
+    def disable(self) -> None:
+        """禁用均价止损"""
+        self.enabled = False
+        self.loss_percent = None
+
+    def to_dict(self) -> dict:
+        """转换为字典"""
+        return {
+            'enabled': self.enabled,
+            'loss_percent': float(self.loss_percent) if self.loss_percent else None
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'AvgPriceStopLossConfig':
+        """从字典创建实例"""
+        instance = cls()
+        instance.enabled = data.get('enabled', False)
+        loss_percent = data.get('loss_percent')
+        instance.loss_percent = Decimal(str(loss_percent)) if loss_percent is not None else None
+        return instance
+
 class TakeProfitConfig:
     """总体止盈配置"""
     def __init__(self):
@@ -112,9 +176,11 @@ class GridData(QObject):
         self.exchange = exchange
         self.inst_type = inst_type
         self.direction = GridDirection.LONG  # 默认做多
+        self.grid_levels: Dict[int, LevelConfig] = {}  # 层号 -> 配置
         self.take_profit_config = TakeProfitConfig()
         self.stop_loss_config = StopLossConfig()
-        self.grid_levels: Dict[int, LevelConfig] = {}  # 层号 -> 配置
+        self.avg_price_take_profit_config = AvgPriceTakeProfitConfig()
+        self.avg_price_stop_loss_config = AvgPriceStopLossConfig()
         self.last_price: Optional[Decimal] = None  # 最新价格
         self.last_update_time: Optional[datetime] = None  # 最后更新时间
         self.total_realized_profit = Decimal('0')  # 添加累计已实现盈利字段
@@ -140,6 +206,8 @@ class GridData(QObject):
             "开仓触发价": None,
             "止盈触发价": None,
             "实现盈亏": None,    # 新增
+            "均价止盈": None,
+            "均价止损": None,
             "总体止盈": None,   # 新增
             "总体止损": None,   # 新增
             "最后时间": None,
@@ -503,7 +571,8 @@ class GridData(QObject):
                 return {
                     'total_value': Decimal('0'),
                     'avg_price': Decimal('0'),
-                    'unrealized_pnl': Decimal('0')
+                    'unrealized_pnl': Decimal('0'),
+                    'total_size': Decimal('0')
                 }
 
             # print(f"网格配置数: {len(self.grid_levels)}")
@@ -544,7 +613,10 @@ class GridData(QObject):
             # 计算结果
             if total_size > 0:
                 avg_price = (total_cost / total_size).quantize(Decimal('0.0000'))
-                total_value = (total_size * current_price).quantize(Decimal('0.00'))
+                if self.is_spot():
+                    total_value = (total_size * current_price).quantize(Decimal('0.00'))
+                else:
+                    total_value = (total_size * avg_price).quantize(Decimal('0.00'))
                 unrealized_pnl = (
                     (current_price - avg_price) * total_size if self.is_long()
                     else (avg_price - current_price) * total_size
@@ -557,7 +629,8 @@ class GridData(QObject):
             result = {
                 'total_value': total_value,
                 'avg_price': avg_price,
-                'unrealized_pnl': unrealized_pnl
+                'unrealized_pnl': unrealized_pnl,
+                'total_size': total_size
             }
             
             # print("\n计算结果:")
@@ -574,9 +647,81 @@ class GridData(QObject):
             return {
                 'total_value': Decimal('0'),
                 'avg_price': Decimal('0'),
-                'unrealized_pnl': Decimal('0')
+                'unrealized_pnl': Decimal('0'),
+                'total_size': Decimal('0')
             }
-    
+
+    def calculate_avg_price_tp_sl_prices(self) -> dict:
+        """计算均价止盈止损触发价格"""
+        result = {
+            'avg_tp_price': None,
+            'avg_sl_price': None
+        }
+        
+        # 获取持仓均价
+        position_metrics = self.calculate_position_metrics()
+        avg_price = position_metrics.get('avg_price')
+        
+        if not avg_price or avg_price == Decimal('0'):
+            return result
+            
+        # 计算均价止盈触发价
+        if (self.avg_price_take_profit_config.enabled and 
+            self.avg_price_take_profit_config.profit_percent):
+            profit_rate = self.avg_price_take_profit_config.profit_percent / Decimal('100')
+            if self.is_long():
+                result['avg_tp_price'] = avg_price * (Decimal('1') + profit_rate)
+            else:
+                result['avg_tp_price'] = avg_price * (Decimal('1') - profit_rate)
+                
+        # 计算均价止损触发价
+        if (self.avg_price_stop_loss_config.enabled and 
+            self.avg_price_stop_loss_config.loss_percent):
+            loss_rate = self.avg_price_stop_loss_config.loss_percent / Decimal('100')
+            if self.is_long():
+                result['avg_sl_price'] = avg_price * (Decimal('1') - loss_rate)
+            else:
+                result['avg_sl_price'] = avg_price * (Decimal('1') + loss_rate)
+                
+        return result
+
+    def update_market_data(self, data) -> None:
+        """更新市场数据"""
+        try:
+            price_str = find_value(data, "lastPr")
+            if not price_str:
+                return   
+            new_price = Decimal(str(price_str))
+            self.last_price = new_price
+            
+            # 查找时间戳
+            timestamp = find_value(data, "ts")
+            if timestamp:
+                timestamp = int(timestamp)
+                self.last_update_time = datetime.fromtimestamp(timestamp / 1000)
+
+            # 计算持仓指标
+            position_metrics = self.calculate_position_metrics()
+            # 计算均价止盈止损触发价
+            tp_sl_prices = self.calculate_avg_price_tp_sl_prices()
+            
+            # 更新表格数据
+            self.update_row_dict({
+                "最后价格": str(self.last_price),
+                "最后时间": self.last_update_time.strftime("%H:%M:%S"), 
+                "时间戳": timestamp,
+                "持仓价值": str(position_metrics['total_value']),
+                "持仓均价": str(position_metrics['avg_price']),
+                "持仓盈亏": str(position_metrics['unrealized_pnl']),
+                "实现盈亏": str(self.total_realized_profit),
+                "均价止盈触发价": str(tp_sl_prices['avg_tp_price']) if tp_sl_prices['avg_tp_price'] else "-",
+                "均价止损触发价": str(tp_sl_prices['avg_sl_price']) if tp_sl_prices['avg_sl_price'] else "-"
+            })
+        
+        except Exception as e:
+            print(f"更新市场数据错误: {e}")
+            print(traceback.format_exc())
+
     def add_realized_profit(self, profit: Decimal):
         """添加已实现盈利"""
         self.total_realized_profit += profit
@@ -590,22 +735,50 @@ class GridData(QObject):
         # 检查是否达到总体止盈条件
         position_metrics = self.calculate_position_metrics()
         unrealized_pnl = position_metrics['unrealized_pnl']
-        if self.check_take_profit_condition(unrealized_pnl):
+        if self._check_take_profit_condition(unrealized_pnl):
             self.logger.info(f"[GridData] 达到总体止盈条件：{self.total_realized_profit} >= {self.take_profit_config.profit_amount}")
             return True
         return False
 
-    def check_take_profit_condition(self, unrealized_pnl: Decimal) -> bool:
+    def _check_take_profit_condition(self, unrealized_pnl: Decimal) -> bool:
         """检查是否达到总体止盈条件（使用累计已实现盈利）"""
         if not self.take_profit_config.enabled or self.take_profit_config.profit_amount is None:
             return False
         return self.total_realized_profit - unrealized_pnl >= self.take_profit_config.profit_amount
         
-    def check_stop_loss_condition(self, unrealized_pnl: Decimal) -> bool:
+    def _check_stop_loss_condition(self, unrealized_pnl: Decimal) -> bool:
         """检查是否达到总体止损条件（使用总浮动亏损）"""
         if not self.stop_loss_config.enabled or self.stop_loss_config.loss_amount is None:
             return False
         return unrealized_pnl <= -self.stop_loss_config.loss_amount
+
+    def _check_avg_price_take_profit_stop_loss(self, current_price: Decimal) -> bool:
+        """检查均价止盈止损条件"""
+        if not self.has_filled_levels():
+            return False
+            
+        # 获取当前持仓均价
+        position_metrics = self.calculate_position_metrics()
+        avg_price = position_metrics.get('avg_price')
+        if not avg_price:
+            return False
+            
+        # 计算当前价格相对于均价的百分比变化
+        price_change_percent = ((current_price - avg_price) / avg_price) * Decimal('100')
+        
+        # 检查均价止盈条件
+        if self.avg_price_take_profit_config.enabled and self.avg_price_take_profit_config.profit_percent:
+            if price_change_percent >= self.avg_price_take_profit_config.profit_percent:
+                self._close_all_positions("触发均价止盈")
+                return True
+                
+        # 检查均价止损条件
+        if self.avg_price_stop_loss_config.enabled and self.avg_price_stop_loss_config.loss_percent:
+            if price_change_percent <= -self.avg_price_stop_loss_config.loss_percent:
+                self._close_all_positions("触发均价止损")
+                return True
+                
+        return False
 
     def get_last_filled_level(self) -> Optional[int]:
         """获取最后一个已成交的层级"""
@@ -669,42 +842,6 @@ class GridData(QObject):
     def is_spot(self) -> bool:
         """是否现货"""
         return self.inst_type == "SPOT"
-
-    def update_market_data(self, data) -> None:
-        """更新市场数据"""
-        try:
-            price_str = find_value(data, "lastPr")
-            if not price_str:
-                return   
-            new_price = Decimal(str(price_str))
-            self.last_price = new_price
-            
-            # 查找时间戳
-            timestamp = find_value(data, "ts")
-            if timestamp:
-                timestamp = int(timestamp)
-                self.last_update_time = datetime.fromtimestamp(timestamp / 1000)
-
-            # 计算持仓指标
-            position_metrics = self.calculate_position_metrics()
-            
-            # 更新表格数据
-            self.update_row_dict({
-                "最后价格": str(self.last_price),
-                "最后时间": self.last_update_time.strftime("%H:%M:%S"), 
-                "时间戳": timestamp,
-                "持仓价值": str(position_metrics['total_value']),
-                "持仓均价": str(position_metrics['avg_price']),
-                "持仓盈亏": str(position_metrics['unrealized_pnl']),
-                "实现盈亏": str(self.total_realized_profit)
-            })
-    
-            # 发送更新信号
-            # self.data_updated.emit(self.uid)
-        
-        except Exception as e:
-            print(f"更新市场数据错误: {e}")
-            print(traceback.format_exc())
 
     def to_dict(self) -> dict:
         """转换为字典格式"""

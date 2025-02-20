@@ -460,7 +460,7 @@ class GridTrader(QObject):
             unrealized_pnl = position_metrics['unrealized_pnl']
             
             # 检查总体止损条件（使用浮动盈亏判断）
-            if grid_status["filled_levels"] > 0 and self.grid_data.check_stop_loss_condition(unrealized_pnl):
+            if grid_status["filled_levels"] > 0 and self.grid_data._check_stop_loss_condition(unrealized_pnl):
                 self._close_all_positions("总体止损触发，全部平仓")
                 return
 
@@ -914,7 +914,7 @@ class GridTrader(QObject):
                         self.logger.debug(f"[GridTrader] 止盈完成，网格已重置")
 
                         # 检查是否达到总体止盈条件
-                        if self.grid_data.check_take_profit_condition():
+                        if self.grid_data._check_take_profit_condition():
                             self._close_all_positions("达到总体止盈目标，全部平仓")
                         else:
                             # 立即检查是否可以重新开仓

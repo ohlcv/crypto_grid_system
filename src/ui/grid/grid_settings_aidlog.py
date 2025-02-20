@@ -209,6 +209,7 @@ class GridSetting(QTableWidget):
                 self.takeItem(row, col)
             # 设置新的 item
             self.setItem(row, col, item)
+
 class GridDialog(QDialog):
     def __init__(self, grid_data):
         super().__init__()
@@ -265,14 +266,36 @@ class GridDialog(QDialog):
 
         layout.addLayout(input_layout)
 
-        # === 第二行：总体止盈止损设置 ===
+        # === 第二行：止盈止损设置 ===
         tp_sl_layout = QHBoxLayout()
         tp_sl_layout.setSpacing(10)  # 设置组件之间的间距为10像素
 
-        # 止盈设置（靠左）
+        # 均价止盈设置
+        self.avg_tp_enabled = QCheckBox("启用均价止盈")
+        tp_sl_layout.addWidget(self.avg_tp_enabled)
+                
+        self.avg_tp_percent = QLineEdit()
+        self.avg_tp_percent.setValidator(QDoubleValidator(0.0, 999999.99, 2))
+        self.avg_tp_percent.setPlaceholderText("止盈百分比(%)")
+        self.avg_tp_percent.setFixedWidth(120)
+        self.avg_tp_percent.setEnabled(False)
+        tp_sl_layout.addWidget(self.avg_tp_percent)
+
+        # 均价止损设置
+        self.avg_sl_enabled = QCheckBox("启用均价止损")
+        tp_sl_layout.addWidget(self.avg_sl_enabled)
+
+        self.avg_sl_percent = QLineEdit()
+        self.avg_sl_percent.setValidator(QDoubleValidator(0.0, 999999.99, 2))
+        self.avg_sl_percent.setPlaceholderText("止损百分比(%)")
+        self.avg_sl_percent.setFixedWidth(120)
+        self.avg_sl_percent.setEnabled(False)
+        tp_sl_layout.addWidget(self.avg_sl_percent)
+
+        # 总体止盈设置
         self.tp_enabled = QCheckBox("启用总体止盈")
         tp_sl_layout.addWidget(self.tp_enabled)
-                
+                    
         self.tp_amount = QLineEdit()
         self.tp_amount.setValidator(QDoubleValidator(0.0, 999999.99, 2))
         self.tp_amount.setPlaceholderText("止盈金额(USDT)")
@@ -280,7 +303,7 @@ class GridDialog(QDialog):
         self.tp_amount.setEnabled(False)
         tp_sl_layout.addWidget(self.tp_amount)
 
-        # 止损设置
+        # 总体止损设置
         self.sl_enabled = QCheckBox("启用总体止损")
         tp_sl_layout.addWidget(self.sl_enabled)
 
@@ -297,6 +320,8 @@ class GridDialog(QDialog):
         # 连接信号
         self.tp_enabled.toggled.connect(self._on_tp_toggled)
         self.sl_enabled.toggled.connect(self._on_sl_toggled)
+        self.avg_tp_enabled.toggled.connect(self._on_avg_tp_toggled)
+        self.avg_sl_enabled.toggled.connect(self._on_avg_sl_toggled)
 
         layout.addLayout(tp_sl_layout)
 
@@ -330,6 +355,18 @@ class GridDialog(QDialog):
         self.sl_amount.setEnabled(checked)
         if not checked:
             self.sl_amount.clear()
+
+    def _on_avg_tp_toggled(self, checked: bool):
+        """处理均价止盈复选框状态变化"""
+        self.avg_tp_percent.setEnabled(checked)
+        if not checked:
+            self.avg_tp_percent.clear()
+
+    def _on_avg_sl_toggled(self, checked: bool):
+        """处理均价止损复选框状态变化"""
+        self.avg_sl_percent.setEnabled(checked)
+        if not checked:
+            self.avg_sl_percent.clear()
 
     def create_input_field(self, placeholder_text, validator):
         """创建带有验证器的输入框"""
@@ -459,6 +496,19 @@ class GridDialog(QDialog):
             self.sl_amount.setEnabled(True)
             self.sl_amount.setText(str(self.grid_data.stop_loss_config.loss_amount))
 
+        # 加载均价止盈止损设置
+        self.avg_tp_enabled.setChecked(self.grid_data.avg_price_take_profit_config.enabled)
+        if (self.grid_data.avg_price_take_profit_config.enabled and 
+            self.grid_data.avg_price_take_profit_config.profit_percent is not None):
+            self.avg_tp_percent.setEnabled(True)
+            self.avg_tp_percent.setText(str(self.grid_data.avg_price_take_profit_config.profit_percent))
+            
+        self.avg_sl_enabled.setChecked(self.grid_data.avg_price_stop_loss_config.enabled)
+        if (self.grid_data.avg_price_stop_loss_config.enabled and 
+            self.grid_data.avg_price_stop_loss_config.loss_percent is not None):
+            self.avg_sl_percent.setEnabled(True)
+            self.avg_sl_percent.setText(str(self.grid_data.avg_price_stop_loss_config.loss_percent))
+        
     def save_grid(self):
         """保存网格设置并同步到后台数据结构"""
         try:
@@ -512,6 +562,28 @@ class GridDialog(QDialog):
             else:
                 self.grid_data.stop_loss_config.disable()
 
+            # 保存均价止盈设置
+            if self.avg_tp_enabled.isChecked():
+                if not self.avg_tp_percent.text().strip():
+                    raise ValueError("请输入均价止盈百分比")
+                avg_tp_percent = Decimal(self.avg_tp_percent.text())
+                if avg_tp_percent <= 0:
+                    raise ValueError("均价止盈百分比必须大于0")
+                self.grid_data.avg_price_take_profit_config.enable(avg_tp_percent)
+            else:
+                self.grid_data.avg_price_take_profit_config.disable()
+                
+            # 保存均价止损设置
+            if self.avg_sl_enabled.isChecked():
+                if not self.avg_sl_percent.text().strip():
+                    raise ValueError("请输入均价止损百分比")
+                avg_sl_percent = Decimal(self.avg_sl_percent.text())
+                if avg_sl_percent <= 0:
+                    raise ValueError("均价止损百分比必须大于0")
+                self.grid_data.avg_price_stop_loss_config.enable(avg_sl_percent)
+            else:
+                self.grid_data.avg_price_stop_loss_config.disable()
+
             # 处理网格层数据
             if len(valid_existing_rows) == 0 and len(valid_new_rows) == 0:
                 self.grid_data.reset_to_initial()
@@ -541,9 +613,11 @@ class GridDialog(QDialog):
             grid_status = self.grid_data.get_grid_status()
             current_level = (f"{grid_status['filled_levels']}/{grid_status['total_levels']}"
                         if grid_status['is_configured'] else "0/0")
-            
+
             # 更新表格显示
             self.grid_data.row_dict.update({
+                "均价止盈": f"{avg_tp_percent}%" if self.avg_tp_enabled.isChecked() else "-",
+                "均价止损": f"{avg_sl_percent}%" if self.avg_sl_enabled.isChecked() else "-",
                 "总体止盈": str(tp_amount) if tp_amount else "-",
                 "总体止损": str(sl_amount) if sl_amount else "-",
                 "当前层数": current_level

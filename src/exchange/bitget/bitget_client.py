@@ -460,23 +460,3 @@ class BitgetClient(BaseClient):
         # 需要重新连接WebSocket
         self.disconnect()
         self.connect()
-
-    def test_connection(self) -> Dict:
-        """测试API连接
-        Returns:
-            Dict: {
-                'ws_status': Dict[str, bool],  # WebSocket连接状态
-            }
-        """
-        try:
-            return {
-                'ws_status': self.get_ws_status()
-            }
-        except Exception as e:
-            print(f"[BitgetClient] 获取连接状态失败: {e}")
-            return {
-                'ws_status': {
-                    'public': False,
-                    'private': False
-                }
-            }
