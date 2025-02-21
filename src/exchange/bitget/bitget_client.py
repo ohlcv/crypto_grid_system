@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import ROUND_HALF_DOWN, ROUND_HALF_UP, Decimal
 import threading
 import time
 import traceback
@@ -6,11 +6,12 @@ from typing import Dict, Optional, List
 from qtpy.QtCore import Signal
 
 from src.exchange.base_client import (
-    BaseClient, FillResponse, InstType, OrderRequest, OrderResponse, WSRequest,
+    BaseClient, FillResponse, InstType, OrderRequest, OrderResponse, PositionSide, WSRequest,
     OrderType, OrderSide, TradeSide
 )
-from src.exchange.bitget.v2.bg_v2_api import BitgetMixAPI, BitgetSpotAPI
-from src.exchange.bitget.websocket.bgws_client import BGWebSocketClient
+
+from src.exchange.bitget.bg_v2_api import BitgetMixAPI, BitgetSpotAPI
+from src.exchange.bitget.ws.bgws_client import BGWebSocketClient
 from src.utils.logger.log_helper import ws_logger, api_logger
 from src.utils.error.error_handler import error_handler
 
@@ -215,6 +216,71 @@ class BitgetClient(BaseClient):
         """获取产品类型字符串"""
         return "SPOT" if self.inst_type == InstType.SPOT else "USDT-FUTURES"
 
+    def get_fills(self, symbol: str, order_id: str) -> List[OrderResponse]:
+        """获取成交记录"""
+        time.sleep(0.5)
+        try:
+            symbol = self._format_symbol(symbol)
+            fills = self.rest_api.get_fills(symbol=symbol, order_id=order_id)
+            
+            result = []
+            if fills.get('code') == '00000':
+                # 根据 inst_type 区分现货和合约返回格式
+                fill_list = fills.get('data', []) if self.inst_type == InstType.SPOT else fills.get('data', {}).get('fillList', [])
+                
+                for fill in fill_list:
+                    # 通用字段
+                    order_id = fill.get('orderId', '')
+                    side = OrderSide(fill.get('side', '').lower())  # 统一转为小写，确保兼容
+                    
+                    # 处理 trade_side（现货无此字段，需从上下文推导）
+                    trade_side_str = fill.get('tradeSide', None)
+                    trade_side = TradeSide(trade_side_str.lower()) if trade_side_str else None
+                    
+                    # 处理成交金额和数量字段（现货和合约字段名不同）
+                    if self.inst_type == InstType.SPOT:
+                        filled_amount = Decimal(str(fill.get('size', '0')))  # 现货使用 size
+                        filled_price = Decimal(str(fill.get('priceAvg', '0')))  # 现货使用 priceAvg
+                        filled_value = Decimal(str(fill.get('amount', '0')))  # 现货使用 amount
+                    else:
+                        filled_amount = Decimal(str(fill.get('baseVolume', '0')))  # 合约使用 baseVolume
+                        filled_price = Decimal(str(fill.get('price', '0')))  # 合约使用 price
+                        filled_value = Decimal(str(fill.get('quoteVolume', '0')))  # 合约使用 quoteVolume
+                    
+                    # 处理手续费
+                    fee = Decimal('0')
+                    fee_detail = fill.get('feeDetail')
+                    if isinstance(fee_detail, dict):
+                        fee = Decimal(str(fee_detail.get('totalFee', '0')))
+                    elif isinstance(fee_detail, list) and fee_detail:
+                        fee = Decimal(str(fee_detail[0].get('totalFee', '0')))
+                    
+                    # 构建 OrderResponse
+                    resp = OrderResponse(
+                        status='success',
+                        error_message=None,
+                        order_id=order_id,
+                        side=side,
+                        trade_side=trade_side,
+                        filled_amount=filled_amount,
+                        filled_price=filled_price,
+                        filled_value=filled_value,
+                        fee=fee,
+                        open_time=int(fill.get('cTime', 0)) if trade_side == TradeSide.OPEN else None,
+                        close_time=int(fill.get('cTime', 0)) if trade_side == TradeSide.CLOSE else None,
+                        profit=Decimal(str(fill.get('profit', '0'))) if 'profit' in fill else None
+                    )
+                    result.append(resp)
+                
+                return result
+            
+            self.logger.warning(f"获取成交记录失败: {fills.get('msg', 'Unknown error')}")
+            return []
+
+        except Exception as e:
+            self.logger.error("获取成交记录失败", exc_info=e)
+            return []
+
     def place_order(self, request: OrderRequest) -> OrderResponse:
         try:
             self.logger.info(f"下单请求: {request}")
@@ -224,47 +290,64 @@ class BitgetClient(BaseClient):
                 "orderType": request.order_type.value,
             }
             
-            if self.inst_type == InstType.FUTURES:
-                # 合约：size 始终是 base amount
+            # 用于返回的 order_side，初始化为 request.side
+            order_side = request.side
+            
+            if request.inst_type == InstType.FUTURES:
+                # 合约订单
                 if request.volume is not None:
-                    params["size"] = str(request.volume)
+                    size = request.volume
                 elif request.quote_amount and request.base_price:
-                    params["size"] = str(request.quote_amount / request.base_price)
+                    size = request.quote_amount / request.base_price
                 else:
                     raise ValueError("合约订单必须提供 volume 或 quote_amount 和 base_price")
+                    
+                if not request.position_side:
+                    raise ValueError("合约订单必须提供 position_side")
+                    
+                # 根据 Bitget 规则，OrderSide 仅依赖 PositionSide
+                if request.position_side == PositionSide.LONG:
+                    order_side = OrderSide.BUY  # long 对应 buy
+                else:  # PositionSide.SHORT
+                    order_side = OrderSide.SELL  # short 对应 sell
                 
                 params.update({
-                    "side": request.side.value,
+                    "size": str(size),
+                    "side": order_side.value,
                     "tradeSide": request.trade_side.value,
                     "productType": request.product_type or "USDT-FUTURES",
                     "marginMode": request.margin_mode or "crossed",
                     "marginCoin": request.margin_coin or "USDT",
                 })
             else:
-                # 现货：根据 order_type 和 side 计算 size
+                # 现货订单
                 if request.order_type == OrderType.MARKET:
                     if request.side == OrderSide.BUY:
                         if request.quote_amount is not None:
-                            params["size"] = str(request.quote_amount)
+                            size = request.quote_amount
                         elif request.volume and request.base_price:
-                            params["size"] = str(request.volume * request.base_price)
+                            size = request.volume * request.base_price
                         else:
                             raise ValueError("现货市价买单必须提供 quote_amount 或 volume 和 base_price")
-                    else:
+                    else:  # OrderSide.SELL
                         if request.volume is not None:
-                            params["size"] = str(request.volume)
+                            size = request.volume
                         elif request.quote_amount and request.base_price:
-                            params["size"] = str(request.quote_amount / request.base_price)
+                            size = request.quote_amount / request.base_price
                         else:
                             raise ValueError("现货市价卖单必须提供 volume 或 quote_amount 和 base_price")
-                else:
+                else:  # OrderType.LIMIT
                     if request.volume is not None:
-                        params["size"] = str(request.volume)
+                        size = request.volume
                     elif request.quote_amount and request.base_price:
-                        params["size"] = str(request.quote_amount / request.base_price)
+                        size = request.quote_amount / request.base_price
                     else:
                         raise ValueError("现货限价单必须提供 volume 或 quote_amount 和 base_price")
-                params["side"] = request.side.value
+                        
+                params.update({
+                    "size": str(size),
+                    "side": request.side.value,
+                })
             
             if request.order_type == OrderType.LIMIT:
                 if request.price is None:
@@ -274,8 +357,57 @@ class BitgetClient(BaseClient):
             if request.client_order_id:
                 params["clientOid"] = request.client_order_id
             
+            # 调用下单 API
             response = self.rest_api.place_order(**params)
-            return self._convert_order_response(response, request.side, request.trade_side)
+            if response.get('code') != '00000':
+                return OrderResponse(
+                    status='failed',
+                    error_message=response.get('msg', 'Unknown error'),
+                    order_id='',
+                    side=order_side,
+                    trade_side=request.trade_side,
+                    filled_amount=Decimal('0'),
+                    filled_price=Decimal('0'),
+                    filled_value=Decimal('0'),
+                    fee=Decimal('0')
+                )
+
+            order_id = response['data']['orderId']
+            if request.order_type == OrderType.MARKET:
+                fills = self.get_fills(request.symbol, order_id)
+                if fills and fills[0].status == 'success':
+                    fill = fills[0]
+                    if fill.trade_side is None:
+                        fill.trade_side = request.trade_side
+                    return OrderResponse(
+                        status='success',
+                        error_message=None,
+                        order_id=order_id,
+                        side=order_side,  # 使用根据 PositionSide 确定的 order_side
+                        trade_side=fill.trade_side,
+                        filled_amount=fill.filled_amount,
+                        filled_price=fill.filled_price,
+                        filled_value=fill.filled_value,
+                        fee=fill.fee,
+                        open_time=fill.open_time if fill.trade_side == TradeSide.OPEN else None,
+                        close_time=fill.close_time if fill.trade_side == TradeSide.CLOSE else None,
+                        profit=fill.profit if fill.trade_side == TradeSide.CLOSE else None
+                    )
+                else:
+                    self.logger.warning(f"未获取到订单 {order_id} 的成交详情，可能是延迟或失败")
+            
+            return OrderResponse(
+                status='success',
+                error_message=None,
+                order_id=order_id,
+                side=order_side,  # 使用根据 PositionSide 确定的 order_side
+                trade_side=request.trade_side,
+                filled_amount=Decimal('0'),
+                filled_price=Decimal('0'),
+                filled_value=Decimal('0'),
+                fee=Decimal('0'),
+                open_time=int(response['data'].get('cTime', 0)) if request.trade_side == TradeSide.OPEN else None
+            )
         
         except Exception as e:
             self.logger.error(f"下单失败 - 请求: {request}", exc_info=e)
@@ -283,7 +415,7 @@ class BitgetClient(BaseClient):
                 status='failed',
                 error_message=str(e),
                 order_id='',
-                side=request.side,
+                side=order_side,
                 trade_side=request.trade_side,
                 filled_amount=Decimal('0'),
                 filled_price=Decimal('0'),
@@ -291,62 +423,40 @@ class BitgetClient(BaseClient):
                 fee=Decimal('0')
             )
 
-    def get_fills(self, symbol: str, order_id: str) -> List[OrderResponse]:
-        """获取成交记录"""
-        try:
-            symbol = self._format_symbol(symbol)
-            fills = self.rest_api.get_fills(symbol=symbol, order_id=order_id)
-            
-            result = []
-            if fills.get('code') == '00000':
-                # 合约和现货返回格式不同
-                fill_list = []
-                if self.inst_type == InstType.SPOT:
-                    fill_list = fills.get('data', [])
-                else:
-                    fill_list = fills.get('data', {}).get('fillList', [])
-
-                for fill in fill_list:
-                    result.append(OrderResponse(
-                        status='success',
-                        error_message=None,
-                        order_id=fill['orderId'],
-                        side=OrderSide(fill.get('side', '')),
-                        trade_side=TradeSide(fill.get('tradeSide', '')),
-                        filled_amount=Decimal(str(fill.get('size', '0'))),
-                        filled_price=Decimal(str(fill.get('price', '0'))),
-                        filled_value=Decimal(str(fill.get('quoteSize', '0'))),
-                        fee=Decimal(str(fill.get('fee', '0'))),
-                        open_time=int(fill.get('cTime', 0)) if fill.get('tradeSide') == 'open' else None,
-                        close_time=int(fill.get('cTime', 0)) if fill.get('tradeSide') == 'close' else None,
-                        profit=Decimal(str(fill.get('profit', '0'))) if 'profit' in fill else None
-                    ))
-            return result
-
-        except Exception as e:
-            self.logger.error("获取成交记录失败", exc_info=e)
-            return []
-    
     def all_close_positions(self, symbol: str, side: Optional[str] = None) -> List[OrderResponse]:
+        """
+        一键平仓方法
+        Args:
+            symbol: 交易对 (如 "TRUMP/USDT")
+            side: 持仓方向 (仅合约使用，可选值为 "long" 或 "short")
+        Returns:
+            List[OrderResponse]: 平仓订单响应列表
+        """
         try:
             symbol = self._format_symbol(symbol)
             result = []
 
             if self.inst_type == InstType.FUTURES:
                 # 合约一键平仓
+                self.logger.info(f"合约一键平仓: {symbol}, 方向: {side}")
+                if side not in ['long', 'short']:
+                    raise ValueError("合约平仓必须指定 side 为 'long' 或 'short'")
+                
+                # 调用 Bitget 的平仓 API
                 response = self.rest_api.all_close_positions(
                     symbol=symbol,
                     hold_side=side
                 )
-                
                 if response.get('code') == '00000':
                     success_list = response.get('data', {}).get('successList', [])
                     for order in success_list:
+                        # 根据 Bitget 规则，平仓的 OrderSide 与持仓方向一致
+                        order_side = OrderSide.BUY if side == 'long' else OrderSide.SELL
                         result.append(OrderResponse(
                             status='success',
                             error_message=None,
                             order_id=order['orderId'],
-                            side=OrderSide.SELL if side == 'long' else OrderSide.BUY,
+                            side=order_side,  # 平多用 BUY，平空用 SELL
                             trade_side=TradeSide.CLOSE,
                             filled_amount=Decimal(str(order.get('fillSize', '0'))),
                             filled_price=Decimal(str(order.get('fillPrice', '0'))),
@@ -355,53 +465,95 @@ class BitgetClient(BaseClient):
                             close_time=int(order.get('cTime', 0)),
                             profit=Decimal(str(order.get('profit', '0'))) if 'profit' in order else None
                         ))
+                    self.logger.info(f"合约平仓成功，订单数: {len(result)}")
                 else:
                     raise ValueError(f"合约一键平仓失败: {response.get('msg')}")
 
             else:
-                # 现货一键平仓，先查询持仓
+                # 现货一键平仓
+                self.logger.info(f"现货一键平仓: {symbol}")
                 assets_response = self.rest_api.get_account_assets(
                     coin=symbol.split('USDT')[0]
                 )
                 if assets_response.get('code') != '00000':
                     raise ValueError(f"获取账户资产失败: {assets_response.get('msg')}")
-                    
-                # 检查可用余额
+
+                pair_info = self.rest_api.get_pairs(symbol=symbol)
+                if pair_info.get('code') != '00000':
+                    raise ValueError(f"获取交易对信息失败: {pair_info.get('msg')}")
+                quantity_precision = int(pair_info['data'][0].get('quantityPrecision', 2))
+
                 assets = assets_response.get('data', [])
                 for asset in assets:
                     if asset['coin'].upper() == symbol.split('USDT')[0]:
                         available = Decimal(str(asset['available']))
                         if available <= 0:
-                            return result  # 无可平仓数量
-                            
-                        # 考虑手续费后的实际下单数量
-                        order_amount = available * Decimal('0.998')  
-                        
-                        # 构建平仓请求
+                            self.logger.info("无可平仓数量")
+                            return result
+
+                        order_amount = (available * Decimal('0.99')).quantize(
+                            Decimal('0.' + '0' * quantity_precision),
+                            rounding=ROUND_HALF_DOWN
+                        )
+                        if order_amount <= 0:
+                            self.logger.info("调整后数量为0，无需平仓")
+                            return result
+
                         close_request = OrderRequest(
                             symbol=symbol,
-                            side=OrderSide.SELL,  # 现货平仓就是卖出
+                            inst_type=InstType.SPOT,
+                            position_side=PositionSide.LONG,  # 现货默认 LONG，仅占位符
+                            side=OrderSide.SELL,  # 现货平仓始终用 SELL
                             trade_side=TradeSide.CLOSE,
                             order_type=OrderType.MARKET,
                             volume=order_amount,
                             price=None,
-                            client_order_id=f"close_all_{int(time.time()*1000)}"
+                            client_order_id=f"close_all_{int(time.time()*1000)}",
+                            quote_amount=None,
+                            base_price=None,
+                            product_type=None,
+                            margin_mode=None,
+                            margin_coin=None
                         )
-                        
-                        # 发送平仓订单
+
+                        self.logger.info(f"现货平仓下单: {close_request}")
                         response = self.place_order(close_request)
-                        if response.status == 'success':
-                            result.append(response)
-                        else:
+                        if response.status != 'success':
                             raise ValueError(f"现货平仓下单失败: {response.error_message}")
-                        
+
+                        order_id = response.order_id
+                        fills = self.get_fills(symbol, order_id)
+                        if fills and fills[0].status == 'success':
+                            fill = fills[0]
+                            if fill.trade_side is None:
+                                fill.trade_side = TradeSide.CLOSE
+                            result.append(OrderResponse(
+                                status='success',
+                                error_message=None,
+                                order_id=order_id,
+                                side=OrderSide.SELL,  # 现货平仓用 SELL
+                                trade_side=fill.trade_side,
+                                filled_amount=fill.filled_amount,
+                                filled_price=fill.filled_price,
+                                filled_value=fill.filled_value,
+                                fee=fill.fee,
+                                close_time=fill.close_time
+                            ))
+                            self.logger.info(f"现货平仓成功，成交详情: {result[0]}")
+                        else:
+                            self.logger.warning(f"未获取到订单 {order_id} 的成交详情，可能是延迟")
+                            result.append(response)
+
                         return result
 
-                return result  # 未找到对应资产
+                self.logger.info(f"未找到 {symbol.split('USDT')[0]} 的持仓")
+                return result
+
+            return result
 
         except Exception as e:
             self.logger.error("一键平仓失败", exc_info=e)
-            raise  # 抛出异常，让上层处理
+            raise
 
     def subscribe_pair(self, pair: str, channels: List[str], strategy_uid: str) -> bool:
         """订阅交易对行情"""
@@ -483,42 +635,3 @@ class BitgetClient(BaseClient):
         # WebSocket错误需要检查连接状态
         if error_type in ['ws_public', 'ws_private']:
             self._check_connection_status()
-
-    def _convert_order_response(self, bitget_response: dict, side: OrderSide, trade_side: TradeSide) -> OrderResponse:
-        """转换Bitget订单响应为统一格式"""
-        if bitget_response.get('code') == '00000':
-            data = bitget_response['data']
-            
-            resp = OrderResponse(
-                status='success',
-                error_message=None,
-                order_id=data['orderId'],
-                side=side,
-                trade_side=trade_side,
-                filled_amount=Decimal(str(data.get('fillSize', '0'))),
-                filled_price=Decimal(str(data.get('fillPrice', '0'))),
-                filled_value=Decimal(str(data.get('fillAmount', '0'))),
-                fee=Decimal(str(data.get('fee', '0')))
-            )
-
-            # 补充时间戳
-            if trade_side == TradeSide.OPEN:
-                resp.open_time = int(data.get('cTime', 0))
-            else:
-                resp.close_time = int(data.get('cTime', 0))
-                resp.profit = Decimal(str(data.get('profit', '0'))) if 'profit' in data else None
-                # TODO: 从grid_data获取开仓价格并回传
-                
-            return resp
-        else:
-            return OrderResponse(
-                status='failed',
-                error_message=bitget_response.get('msg', 'Unknown error'),
-                order_id='',
-                side=side,
-                trade_side=trade_side,
-                filled_amount=Decimal('0'),
-                filled_price=Decimal('0'),
-                filled_value=Decimal('0'),
-                fee=Decimal('0')
-            )

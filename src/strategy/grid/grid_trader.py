@@ -9,7 +9,7 @@ from datetime import datetime
 from qtpy.QtCore import QObject, Signal
 
 from src.exchange.base_client import (
-    BaseClient, InstType, OrderRequest, OrderResponse, OrderType, OrderSide, TradeSide
+    BaseClient, InstType, OrderRequest, OrderResponse, OrderType, OrderSide, PositionSide, TradeSide
 )
 from src.utils.common.tools import adjust_decimal_places
 from src.utils.common.tools import find_value
@@ -125,33 +125,29 @@ class GridTrader(QObject):
             print("[GridTrader] 客户端设置完成")
 
     def stop(self) -> bool:
-        """停止策略"""
-        print(f"\n[GridTrader] === 停止策略 === {self.grid_data.uid}")
-        
-        if not self._running:
-            print("[GridTrader] 策略未在运行中")
-            # 清理可能存在的旧线程引用
-            self._thread = None
-            return True
-
-        # 设置停止标志
-        self._stop_flag.set()
-        self._running = False
-
-        # 等待线程结束 - 只在当前线程不是策略线程时等待
-        if self._thread and threading.current_thread().ident != self._thread.ident:
-            print(f"[GridTrader] 等待线程 {self._thread.name} 结束")
-            if self._thread.is_alive():
-                self._thread.join(timeout=2)  # 只在线程活跃时调用 join
-            else:
-                print(f"[GridTrader] 线程 {self._thread.name} 已经结束，跳过 join 调用")
+            """停止策略"""
+            print(f"\n[GridTrader] === 停止策略 === {self.grid_data.uid}")
             
-        # 强制清理线程引用
-        self._thread = None
-        self.status_changed.emit(self.grid_data.uid, "已停止")
-        self.grid_data.set_row_value("运行状态", "已停止")
-        print("[GridTrader] 策略已停止")
-        return True
+            if not self._running:
+                print("[GridTrader] 策略未在运行中")
+                self._thread = None
+                return True
+
+            self._stop_flag.set()
+            self._running = False
+
+            if self._thread and threading.current_thread().ident != self._thread.ident:
+                print(f"[GridTrader] 等待线程 {self._thread.name} 结束")
+                if self._thread.is_alive():
+                    self._thread.join(timeout=2)
+                else:
+                    print(f"[GridTrader] 线程 {self._thread.name} 已经结束，跳过 join 调用")
+            
+            self._thread = None
+            self.status_changed.emit(self.grid_data.uid, "已停止")
+            self.grid_data.set_row_value("运行状态", "已停止")
+            print(f"[GridTrader] 策略已停止")
+            return True
 
     def start(self) -> bool:
         """启动策略"""
@@ -298,13 +294,10 @@ class GridTrader(QObject):
         self.grid_data.set_row_value("运行状态", "已停止")
 
     def handle_error(self, error_msg: str):
-        """处理错误并暂停策略"""
-        print(f"[GridTrader] 策略错误: {error_msg}")
-        self.error_occurred.emit(self.grid_data.uid, error_msg)
-        
-        # 设置停止标志，而不是直接调用 stop()
-        self._stop_flag.set()
-        self._running = False
+            """处理错误并暂停策略"""
+            print(f"[GridTrader] 策略错误: {error_msg}")
+            self.error_occurred.emit(self.grid_data.uid, error_msg)
+            self.stop()  # 直接调用 stop，不记录额外原因
 
     @error_handler()
     def _on_order_update(self, order_id: str, order_data: dict):
@@ -314,7 +307,22 @@ class GridTrader(QObject):
         try:
             if order_data["status"] == "filled":
                 level = self._order_state.current_level
-                self.grid_data.update_order_fill(level, order_data)
+                # 构建 OrderResponse
+                response = OrderResponse(
+                    status='success',
+                    error_message=None,
+                    order_id=order_id,
+                    side=OrderSide(order_data.get('side', '')),
+                    trade_side=TradeSide(order_data.get('tradeSide', '')),
+                    filled_amount=Decimal(str(order_data.get('fillSize', '0'))),
+                    filled_price=Decimal(str(order_data.get('fillPrice', '0'))),
+                    filled_value=Decimal(str(order_data.get('fillAmount', '0'))),
+                    fee=Decimal(str(order_data.get('fee', '0'))),
+                    open_time=int(order_data.get('cTime', 0)) if order_data.get('tradeSide') == 'open' else None,
+                    close_time=int(order_data.get('cTime', 0)) if order_data.get('tradeSide') == 'close' else None,
+                    profit=Decimal(str(order_data.get('profit', '0'))) if 'profit' in order_data else None
+                )
+                self.grid_data.update_order_fill(level, response, "open" if response.trade_side == TradeSide.OPEN else "close")
                 self._order_state.clear_pending_order()
                 print(f"[GridTrader] Order filled: {order_id} for level {level}")
                 
@@ -634,67 +642,15 @@ class GridTrader(QObject):
             return rebound_ratio >= rebound
 
     @error_handler()
-    def _process_fills(self, fills_response: List[OrderResponse]) -> dict:
-        """
-        处理成交明细数据
-        Args:
-            fills_response: 成交明细响应列表
-        Returns:
-            dict: 处理后的成交数据汇总
-        """
-        total_filled_amount = Decimal('0')
-        total_filled_value = Decimal('0')  
-        total_fee = Decimal('0')
-        total_profit = Decimal('0')
-        
-        if not fills_response:
-            return None
-        
-        try:
-            for fill in fills_response:
-                if fill.status != 'success':
-                    continue
-                    
-                total_filled_amount += fill.filled_amount
-                total_filled_value += fill.filled_value
-                total_fee += fill.fee
-                if fill.profit:
-                    total_profit += fill.profit
-
-            # 计算成交均价
-            avg_price = (total_filled_value / total_filled_amount) if total_filled_amount > 0 else Decimal('0')
-
-            result = {
-                'filled_price': avg_price,
-                'filled_amount': total_filled_amount,
-                'filled_value': total_filled_value,
-                'fee': total_fee,
-                'profit': total_profit
-            }
-
-            self.logger.debug(f"成交数据处理结果:")
-            self.logger.debug(f"  均价: {result['filled_price']}")
-            self.logger.debug(f"  数量: {result['filled_amount']}")
-            self.logger.debug(f"  金额: {result['filled_value']}")
-            self.logger.debug(f"  手续费: {result['fee']}")
-            self.logger.debug(f"  收益: {result['profit']}")
-
-            return result
-
-        except Exception as e:
-            self.logger.error(f"处理成交数据失败: {e}")
-            return None
-
-    @error_handler()
     def _place_order(self, level: int) -> None:
         try:
             self.logger.info(f"{self.grid_data.inst_type} {self.grid_data.uid} {self.grid_data.pair} 准备开仓-{level}")
             level_config = self.grid_data.grid_levels[level]
             is_long = self.grid_data.is_long()
 
-            # 使用 invest_amount 作为 quote_amount（USDT），last_price 作为 base_price
             quote_amount = Decimal(str(level_config.invest_amount))
             base_price = Decimal(str(self.grid_data.last_price))
+            volume = None
 
             precision = self.grid_data.quantity_precision or 4
             quote_amount = quote_amount.quantize(
@@ -702,19 +658,20 @@ class GridTrader(QObject):
                 rounding=ROUND_HALF_UP
             )
 
-            self.logger.debug("订单详情:")
+            self.logger.debug("开仓订单详情:")
             self.logger.debug(f"  网格层级: {level}")
             self.logger.debug(f"  方向: {'做多' if is_long else '做空'}")
             self.logger.debug(f"  投资金额 (quote_amount): {quote_amount}")
             self.logger.debug(f"  当前价格 (base_price): {base_price}")
 
-            # 构建订单请求
             request = OrderRequest(
                 symbol=self.grid_data.pair,
+                inst_type=self.grid_data.inst_type,  # 添加 inst_type
+                position_side=PositionSide.LONG if is_long else PositionSide.SHORT,
                 side=OrderSide.BUY if is_long else OrderSide.SELL,
                 trade_side=TradeSide.OPEN,
                 order_type=OrderType.MARKET,
-                volume=None,  # 不直接提供 volume，让 BitgetClient 计算
+                volume=volume,
                 price=None,
                 quote_amount=quote_amount,
                 base_price=base_price,
@@ -730,32 +687,23 @@ class GridTrader(QObject):
                 self._price_state.reset()
             else:
                 error_msg = f"下单失败: {response.error_message}"
-                self.error_occurred.emit(self.grid_data.uid, error_msg)
-                self.stop()
-
+                self.handle_error(error_msg)
         except Exception as e:
             error_msg = f"下单错误: {str(e)}"
             self.trade_logger.error(f"下单错误 - {self.grid_data.uid}", exc_info=e)
-            self.error_occurred.emit(self.grid_data.uid, error_msg)
-            self._stop_flag.set()
-            self._running = False
+            self.handle_error(error_msg)
 
     @error_handler()
     def _place_take_profit_order(self, level: int) -> None:
         try:
             level_config = self.grid_data.grid_levels[level]
             is_long = self.grid_data.is_long()
-            is_spot = self.grid_data.inst_type == InstType.SPOT
             self.logger.info(f"{self.grid_data.inst_type} {self.grid_data.uid} {self.grid_data.pair} 准备止盈-{level}")
 
-            # 计算 quote_amount
             base_amount = level_config.filled_amount
             base_price = Decimal(str(self.grid_data.last_price))
             quote_amount = base_amount * base_price
-            
-            if is_spot:
-                quote_amount *= Decimal('0.998')  # 考虑手续费
-                
+
             precision = self.grid_data.quantity_precision or 4
             quote_amount = quote_amount.quantize(
                 Decimal('0.' + '0' * precision),
@@ -764,7 +712,7 @@ class GridTrader(QObject):
 
             self.logger.debug("止盈订单详情:")
             self.logger.debug(f"  网格层级: {level}")
-            self.logger.debug(f"  方向: {'卖出' if is_long else '买入'}")
+            self.logger.debug(f"  方向: {'long' if is_long else 'short'}")
             self.logger.debug(f"  开仓价格: {level_config.filled_price}")
             self.logger.debug(f"  持仓数量 (base): {base_amount}")
             self.logger.debug(f"  当前价格 (base_price): {base_price}")
@@ -772,10 +720,12 @@ class GridTrader(QObject):
 
             request = OrderRequest(
                 symbol=self.grid_data.pair,
-                side=OrderSide.SELL if is_long else OrderSide.BUY,
+                inst_type=self.grid_data.inst_type,
+                position_side=PositionSide.LONG if is_long else PositionSide.SHORT,
+                side=OrderSide.BUY if is_long else OrderSide.SELL,  # 平仓时 side 与开仓一致
                 trade_side=TradeSide.CLOSE,
                 order_type=OrderType.MARKET,
-                volume=None,  # 不直接提供 volume
+                volume=base_amount,
                 price=None,
                 quote_amount=quote_amount,
                 base_price=base_price,
@@ -808,36 +758,24 @@ class GridTrader(QObject):
 
     @error_handler()
     def _close_all_positions(self, reason: str) -> tuple[bool, str]:
-        """
-        平掉所有持仓
-        Args:
-            reason: 平仓原因
-        Returns:
-            tuple[bool, str]: (是否成功, 状态消息)
-        """
         try:
             self.logger.info(f"{self.grid_data.inst_type} {self.grid_data.uid} {self.grid_data.pair} 准备全平...")
             self.logger.info(f"  原因: {reason}")
             
-            # 准备平仓参数
             is_long = self.grid_data.is_long()
-            
-            # 发起一键平仓请求
             responses = self.client.all_close_positions(
                 symbol=self.grid_data.pair,
-                side='long' if is_long else 'short'  # 合约用到,现货会忽略
+                side='long' if is_long else 'short'
             )
             
             if not responses:
                 self.logger.info("  无可平仓数量")
-                return True, "无可平仓数量"  # 没有持仓，返回成功但标记具体状态
+                return True, "无可平仓数量"
                 
-            # 处理平仓结果
             total_profit = Decimal('0')
             for response in responses:
                 if response.status == 'success':
                     total_profit += response.profit or Decimal('0')
-                    # 找到对应的网格层更新状态
                     for level, config in self.grid_data.grid_levels.items():
                         if config.is_filled:
                             self.grid_data.handle_take_profit(level, response)
@@ -847,13 +785,8 @@ class GridTrader(QObject):
                     self.error_occurred.emit(self.grid_data.uid, error_msg)
                     return False, error_msg
             
-            # 更新总盈亏
             self.grid_data.add_realized_profit(total_profit)
-            
-            # 重置网格配置
             self.grid_data.reset_to_initial()
-            
-            # 更新UI显示
             self.grid_data.row_dict["运行状态"] = f"已平仓({reason})"
             self.grid_data.data_updated.emit(self.grid_data.uid)
             
@@ -865,5 +798,4 @@ class GridTrader(QObject):
             error_msg = f"平仓出错: {str(e)}"
             self.logger.error(f"[GridTrader] {error_msg}")
             self.logger.error(f"[GridTrader] 错误详情: {traceback.format_exc()}")
-            self.error_occurred.emit(self.grid_data.uid, error_msg)
             return False, error_msg

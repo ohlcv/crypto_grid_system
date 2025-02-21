@@ -2,7 +2,6 @@
 
 from typing import Dict, Optional
 import json
-import time
 import traceback
 from qtpy.QtCore import QObject, Signal
 from src.exchange.base_client import WSRequest

@@ -22,9 +22,32 @@ def signByRSA(message, secret_key):
     return str(base64.b64encode(sign), 'utf8')
 
 
-def pre_hash(timestamp, method, request_path, body = ""):
-    return str(timestamp) + str.upper(method) + request_path + body
+# def pre_hash(timestamp, method, request_path, body = ""):
+#     return str(timestamp) + str.upper(method) + request_path + body
 
+def pre_hash(timestamp, method, request_path, body):
+    print(f"\n[utils.pre_hash] === 开始执行 pre_hash ===")
+    print(f"[utils.pre_hash] 参数 - timestamp: {timestamp} (类型: {type(timestamp)})")
+    print(f"[utils.pre_hash] 参数 - method: {method} (类型: {type(method)})")
+    print(f"[utils.pre_hash] 参数 - request_path: {request_path} (类型: {type(request_path)})")
+    print(f"[utils.pre_hash] 参数 - body: {body} (类型: {type(body)})")
+
+    # 如果 method 是 bytes 类型，先解码为字符串
+    if isinstance(method, bytes):
+        print(f"[utils.pre_hash] method 是 bytes 类型，尝试解码为字符串...")
+        method = method.decode('utf-8')
+        print(f"[utils.pre_hash] 解码后 method: {method} (类型: {type(method)})")
+    elif not isinstance(method, str):
+        print(f"[utils.pre_hash] 警告: method 不是字符串也不是 bytes 类型，无法处理！")
+        raise ValueError(f"Method must be a string or bytes, got {type(method)}")
+
+    # 执行拼接
+    print(f"[utils.pre_hash] 开始拼接字符串...")
+    result = str(timestamp) + method.upper() + request_path + body
+    print(f"[utils.pre_hash] 拼接结果: {result}")
+    print(f"[utils.pre_hash] === pre_hash 执行完成 ===\n")
+
+    return result
 
 def get_header(api_key, sign, timestamp, passphrase):
     header = dict()

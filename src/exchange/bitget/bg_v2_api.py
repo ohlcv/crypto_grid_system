@@ -1,10 +1,10 @@
 from decimal import ROUND_HALF_UP, Decimal
+from pickle import GET
 from typing import Optional
 
 from src.exchange.bitget.exceptions import BitgetAPIException
-from ..consts import GET, POST
-from .spot.order_api import SpotOrderApi
-from .mix.order_api import MixOrderApi
+from src.exchange.bitget.v2.mix.order_api import MixOrderApi
+from src.exchange.bitget.v2.spot.order_api import SpotOrderApi
 from src.utils.logger.log_helper import api_logger
 from src.utils.error.error_handler import error_handler
 
@@ -58,17 +58,18 @@ class BitgetSpotAPI:
         return response
 
     @error_handler()
-    def place_order(self, symbol, size, trade_side, side, orderType, price=None, clientOid=None):
-        self.logger.info(f"下现货订单 - {symbol} - {trade_side} - {size}")
+    def place_order(self, symbol, size, side, orderType, price=None, clientOid=None):
+        self.logger.info(f"下现货订单 - {symbol} - {side} - {size}")
         params = {
             "symbol": symbol,
-            "size": size,
+            "size": str(size),  # 确保转为字符串以符合 API 要求
             "orderType": orderType,
-            "side": side
+            "side": side,
+            "force": "gtc"  # 默认值，现货必填参数
         }
         
         if price and orderType == "limit":
-            params["price"] = price
+            params["price"] = str(price)
         if clientOid:
             params["clientOid"] = clientOid
 
@@ -258,5 +259,3 @@ class BitgetMixAPI:
         else:
             # print("Failed to get fills or error in response.")
             return None
-
-

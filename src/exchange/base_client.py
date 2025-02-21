@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from qtpy.QtCore import QObject, Signal
 
+# 保持现有枚举定义不变
 class InstType(Enum):
     """交易所类型"""
     SPOT = "spot"
@@ -27,22 +28,29 @@ class TradeSide(Enum):
     OPEN = "open"
     CLOSE = "close"
 
+class PositionSide(Enum):
+    """持仓方向"""
+    LONG = "long"   # 多头
+    SHORT = "short" # 空头
+
 @dataclass
 class WSRequest:
     """WebSocket请求数据结构"""
     channel: str            # 频道名称
-    pair: str            # 交易对
-    inst_type: str         # 产品类型: SPOT/USDT-FUTURES
+    pair: str               # 交易对
+    inst_type: str          # 产品类型: SPOT/USDT-FUTURES
     other_params: Dict = field(default_factory=dict)  # 其他参数
 
 @dataclass
 class OrderRequest:
     """统一的订单请求格式"""
     symbol: str                    # 交易对
-    side: OrderSide               # 买卖方向
-    trade_side: TradeSide         # 开平方向
-    order_type: OrderType         # 订单类型
-    volume: Decimal               # 数量（base amount 或 quote amount，视情况而定）
+    inst_type: InstType            # 新增：交易所类型（现货或合约）
+    position_side: PositionSide    # 持仓方向（必填，但可由交易所客户端根据 inst_type 处理）
+    side: OrderSide                # 买卖方向
+    trade_side: TradeSide          # 开平方向
+    order_type: OrderType          # 订单类型
+    volume: Decimal                # 数量（base amount 或 quote amount，视情况而定）
     price: Optional[Decimal] = None  # 价格（限价单使用）
     client_order_id: Optional[str] = None  # 客户端订单ID
     quote_amount: Optional[Decimal] = None  # USDT 数量（现货市价买单使用）
@@ -53,6 +61,7 @@ class OrderRequest:
     margin_mode: Optional[str] = None      # 保证金模式
     margin_coin: Optional[str] = None      # 保证金币种
 
+# OrderResponse 和其他类保持不变
 @dataclass
 class OrderResponse:
     """订单响应"""
@@ -61,17 +70,11 @@ class OrderResponse:
     order_id: str                  # 订单ID
     side: OrderSide               # 买卖方向
     trade_side: TradeSide         # 交易方向（开仓/平仓）
-    
-    # 成交信息
     filled_amount: Decimal = Decimal('0')  # 成交数量
     filled_price: Decimal = Decimal('0')   # 成交均价
     filled_value: Decimal = Decimal('0')   # 成交金额
     fee: Decimal = Decimal('0')            # 手续费
-    
-    # 开仓专用
     open_time: Optional[int] = None        # 开仓时间戳
-    
-    # 平仓专用
     profit: Optional[Decimal] = None       # 平仓盈亏
     open_price: Optional[Decimal] = None   # 开仓价格
     close_time: Optional[int] = None       # 平仓时间戳
@@ -79,7 +82,6 @@ class OrderResponse:
 @dataclass
 class FillResponse:
     """成交明细响应"""
-    # 必需参数放在前面
     trade_id: str                 # 成交ID
     order_id: str                 # 订单ID
     symbol: str                   # 交易对
@@ -91,10 +93,8 @@ class FillResponse:
     filled_value: Decimal        # 成交金额
     fee: Decimal                 # 手续费
     fee_currency: str            # 手续费币种
-    
-    # 可选参数放在后面
-    profit: Optional[Decimal] = None    # 平仓盈亏
-    position_side: Optional[str] = None # 持仓方向
+    profit: Optional[Decimal] = None       # 平仓盈亏
+    position_side: Optional[str] = None    # 持仓方向
     client_order_id: Optional[str] = None  # 客户端订单ID
     error_message: Optional[str] = None    # 错误信息
 

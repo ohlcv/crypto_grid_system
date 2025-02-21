@@ -11,9 +11,9 @@ from datetime import datetime
 from typing import Optional, Dict, List
 from qtpy.QtCore import QObject, Signal
 
-from src.exchange.base_client import InstType, BaseClient
+from src.exchange.base_client import InstType, BaseClient, PositionSide
 from src.exchange.client_factory import ExchangeClientFactory
-from src.strategy.grid.grid_core import GridData, GridDirection
+from src.strategy.grid.grid_core import GridData
 from src.strategy.grid.grid_strategy_manager import GridStrategyManager
 from src.utils.common.common import create_file_if_not_exists
 
@@ -133,9 +133,9 @@ class StrategyManagerWrapper(QObject):
                 is_long=(self.inst_type == InstType.SPOT or is_long)
             )
             
-            # 初始化操作状态
-            grid_data.set_direction(is_long=(self.inst_type == InstType.SPOT or is_long))
-            grid_data.row_dict["操作"] = {"开仓": True, "平仓": True}
+            # 初始化操作状态 - 修改这里
+            grid_data.operations = {"开仓": True, "平仓": True}  # 使用新的属性
+            grid_data.status = "已添加"  # 使用新的属性
             # 缓存交易对参数
             if pair_data:
                 print("\n[StrategyManagerWrapper] === 缓存交易参数 ===")
@@ -346,7 +346,7 @@ class StrategyManagerWrapper(QObject):
         def _save():
             try:
                 data = {
-                    'inst_type': self.inst_type.value,  # 确保使用 .value
+                    'inst_type': self.inst_type.value,
                     'strategies': {},
                     'running_strategies': []
                 }
@@ -354,10 +354,12 @@ class StrategyManagerWrapper(QObject):
                 for uid in list(self.strategy_manager._data.keys()):
                     grid_data = self.strategy_manager.get_strategy_data(uid)
                     if grid_data:
-                        original_status = grid_data.row_dict.get("运行状态", "")
-                        grid_data.row_dict["运行状态"] = "已保存"
+                        # 修改这里
+                        original_status = grid_data.status  # 使用属性
+                        grid_data.status = "已保存"
                         data['strategies'][uid] = grid_data.to_dict()
-                        grid_data.row_dict["运行状态"] = original_status
+                        grid_data.status = original_status
+                        
                         if self.strategy_manager.is_strategy_running(uid):
                             data['running_strategies'].append(uid)
 
@@ -411,59 +413,54 @@ class StrategyManagerWrapper(QObject):
                 for uid, strategy_data in data['strategies'].items():
                     try:
                         print(f"\n[StrategyManagerWrapper] === 加载策略 {uid} ===")
-                        direction = strategy_data["direction"].upper()
-                        is_long = direction == GridDirection.LONG.name
-                        
-                        # 将字符串转换为 InstType
                         inst_type = InstType(strategy_data["inst_type"])
                         
+                        # 创建策略实例
                         grid_data = self.strategy_manager.create_strategy(
                             uid,
                             strategy_data["pair"],
                             strategy_data["exchange"],
-                            inst_type,  # 使用转换后的 InstType
-                            is_long
+                            inst_type
                         )
 
                         if grid_data:
-                            grid_data.direction = GridDirection[direction]
-                            grid_data.row_dict["方向"] = direction
-                            original_profit = Decimal(str(strategy_data.get('total_realized_profit', '0')))
-                            grid_data.total_realized_profit = original_profit
+                            # 确保加载后 GridTrader 的信号连接
+                            trader = self.strategy_manager._strategies[uid]
+                            trader.error_occurred.connect(self.strategy_manager._handle_strategy_error)
+
+                            # 恢复策略数据
+                            grid_data.direction = PositionSide(strategy_data["direction"])
+                            grid_data.status = strategy_data.get("status", "已添加")
+                            grid_data.operations = strategy_data.get("operations", {"开仓": True, "平仓": True})
+                            grid_data.total_realized_profit = Decimal(str(strategy_data.get('total_realized_profit', '0')))
+
+                            # 恢复触发价格
+                            if strategy_data.get("open_trigger_price"):
+                                grid_data.open_trigger_price = Decimal(str(strategy_data["open_trigger_price"]))
+                            if strategy_data.get("tp_trigger_price"):
+                                grid_data.tp_trigger_price = Decimal(str(strategy_data["tp_trigger_price"]))
+                            if strategy_data.get("atp_trigger_price"):
+                                grid_data.atp_trigger_price = Decimal(str(strategy_data["atp_trigger_price"]))
+                            if strategy_data.get("asl_trigger_price"):
+                                grid_data.asl_trigger_price = Decimal(str(strategy_data["asl_trigger_price"]))
+
+                            # 恢复配置
+                            grid_data.take_profit_config = TakeProfitConfig.from_dict(
+                                strategy_data.get('take_profit_config', {})
+                            )
+                            grid_data.stop_loss_config = StopLossConfig.from_dict(
+                                strategy_data.get('stop_loss_config', {})
+                            )
+                            grid_data.avg_price_take_profit_config = AvgPriceTakeProfitConfig.from_dict(
+                                strategy_data.get('avg_price_take_profit_config', {})
+                            )
+                            grid_data.avg_price_stop_loss_config = AvgPriceStopLossConfig.from_dict(
+                                strategy_data.get('avg_price_stop_loss_config', {})
+                            )
                             
+                            # 恢复网格层配置
                             for level_str, config in strategy_data.get("grid_levels", {}).items():
-                                level = int(level_str)
-                                config_data = {
-                                    "间隔%": config["间隔%"],
-                                    "开仓反弹%": config["开仓反弹%"],
-                                    "平仓反弹%": config["平仓反弹%"],
-                                    "止盈%": config["止盈%"],
-                                    "成交额": config["成交额"]
-                                }
-                                if config["已开仓"]:
-                                    config_data.update({
-                                        "filled_amount": config["成交量"],
-                                        "filled_price": config["开仓价"],
-                                        "filled_time": datetime.fromisoformat(config["开仓时间"]) if config["开仓时间"] else None,
-                                        "is_filled": config["已开仓"],
-                                        "order_id": config["order_id"]
-                                    })
-                                grid_data.update_level(level, config_data)
-                            
-                            grid_data.row_dict.update(strategy_data["row_dict"])
-                            grid_data.row_dict["实现盈亏"] = str(original_profit)
-                            
-                            grid_status = grid_data.get_grid_status()
-                            filled_levels = sum(1 for config in grid_data.grid_levels.values() 
-                                        if config.is_filled)
-                            initial_status = "已添加"
-                            if filled_levels > 0:
-                                position_value = grid_data.row_dict.get("持仓价值")
-                                if position_value and float(position_value.replace(",", "")) > 0:
-                                    initial_status = "已停止"
-                                else:
-                                    initial_status = "已平仓"
-                            grid_data.row_dict["运行状态"] = initial_status
+                                grid_data.update_level(int(level_str), config)
                             
                             self.strategy_added.emit(uid)
                             loaded_count += 1

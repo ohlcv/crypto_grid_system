@@ -389,21 +389,45 @@ class GridStrategyTab(QWidget):
                 self.grid_table.remove_strategy(uid)
                 self.show_message("删除成功", "策略已删除！")
 
-    @show_error_dialog
+    def _handle_strategy_refresh(self, uid: str):
+        """处理策略数据刷新请求"""
+        grid_data = self.strategy_wrapper.get_strategy_data(uid)
+        if not grid_data:
+            self.show_error_message("未找到策略数据")
+            return
+                
+        # 计算指标
+        position_metrics = grid_data.calculate_position_metrics()
+        grid_status = grid_data.get_grid_status()
+        
+        # 构建刷新信息
+        info_text = (
+            f"策略数据已刷新:\n"
+            f"交易对: {grid_data.pair}\n"
+            f"方向: {grid_data.direction.value}\n"
+            f"状态: {grid_data.status}\n"
+            f"当前层数: {grid_status['filled_levels']}/{grid_status['total_levels']}\n"
+            f"最新价格: {grid_data.last_price or 'N/A'}\n"
+            f"持仓均价: {position_metrics['avg_price']}\n"
+            f"持仓价值: {position_metrics['total_value']}\n"
+            f"持仓盈亏: {position_metrics['unrealized_pnl']}"
+        )
+        
+        self.show_message("数据已刷新", info_text)
+
     def _handle_strategy_close(self, uid: str):
-        """处理策略平仓请求"""
         if not self.check_client_status():
             return
-            
+                
         grid_data = self.strategy_wrapper.get_strategy_data(uid)
         if not grid_data:
             return
-            
-        # 确认平仓操作
+                
+        grid_status = grid_data.get_grid_status()
         confirm_msg = (
             f"确认平仓 {grid_data.pair} ?\n"
             f"方向: {'多仓' if grid_data.is_long() else '空仓'}\n"
-            f"当前层数: {grid_data.row_dict.get('当前层数')}"
+            f"当前层数: {grid_status['filled_levels']}/{grid_status['total_levels']}"
         )
         
         reply = QMessageBox.question(
@@ -421,31 +445,43 @@ class GridStrategyTab(QWidget):
                 elif message == "平仓成功":
                     self.show_message("平仓成功", "该币持仓已全平！")
                 else:
-                    self.show_message("操作完成", message)  # 其他情况显示具体消息
+                    self.show_message("操作完成", message)
             else:
-                self.show_error_message(message)
+                self._handle_strategy_error(uid, message)
 
-    @show_error_dialog
-    def _handle_strategy_refresh(self, uid: str):
-        """处理策略数据刷新请求"""
+    def _handle_strategy_error(self, uid: str, error_msg: str):
+        """处理策略错误事件"""
+        print(f"[GridStrategyTab] 处理策略错误 - UID: {uid}, 错误: {error_msg}")
+        self.show_error_message(error_msg)
+        if uid:
+            grid_data = self.strategy_wrapper.get_strategy_data(uid)
+            if grid_data:
+                grid_data.status = "错误停止"
+                self.grid_table.update_strategy_row(uid, grid_data)
+
+    def _handle_strategy_started(self, uid: str):
+        """处理策略启动事件"""
         grid_data = self.strategy_wrapper.get_strategy_data(uid)
-        if not grid_data:
-            self.show_error_message("未找到策略数据")
-            return
-            
-        # 构建刷新信息
-        info_text = (
-            f"策略数据已刷新:\n"
-            f"交易对: {grid_data.pair}\n"
-            f"方向: {grid_data.direction.value}\n"
-            f"当前层数: {grid_data.row_dict.get('当前层数', '未设置')}\n"
-            f"最新价格: {grid_data.row_dict.get('最后价格', 'N/A')}\n"
-            f"持仓均价: {grid_data.row_dict.get('持仓均价', 'N/A')}\n"
-            f"持仓价值: {grid_data.row_dict.get('持仓价值', 'N/A')}\n"
-            f"持仓盈亏: {grid_data.row_dict.get('持仓盈亏', 'N/A')}"
-        )
-        
-        self.show_message("数据已刷新", info_text)
+        if grid_data:
+            # 更新显示模型
+            display_model = self.updater._display_models.get(uid)
+            if display_model:
+                grid_data.status = "运行中"
+                display_model.update(grid_data)
+                self.updater.schedule_update(uid)
+                self.updater.commit_updates()
+
+    def _handle_strategy_stopped(self, uid: str):
+        """处理策略停止事件"""
+        grid_data = self.strategy_wrapper.get_strategy_data(uid)
+        if grid_data:
+            # 更新显示模型
+            display_model = self.updater._display_models.get(uid)
+            if display_model:
+                grid_data.status = "已停止"
+                display_model.update(grid_data)
+                self.updater.schedule_update(uid)
+                self.updater.commit_updates()
 
     @show_error_dialog
     def _handle_strategy_added(self, uid: str):
@@ -482,33 +518,6 @@ class GridStrategyTab(QWidget):
         except Exception as e:
             print(f"[GridStrategyTab] 更新UI失败: {e}")
             print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
-
-    @show_error_dialog
-    def _handle_strategy_error(self, uid: str, error_msg: str):
-        """处理策略错误事件"""
-        print(f"[GridStrategyTab] 处理策略错误 - UID: {uid}, 错误: {error_msg}")
-        self.show_error_message(error_msg)
-        if uid:
-            self.grid_table.update_strategy_row(
-                uid, 
-                self.strategy_wrapper.get_strategy_data(uid)
-            )
-
-    @show_error_dialog
-    def _handle_strategy_started(self, uid: str):
-        """处理策略启动事件"""
-        grid_data = self.strategy_wrapper.get_strategy_data(uid)
-        if grid_data:
-            grid_data.row_dict["运行状态"] = "运行中"
-            self.grid_table.update_strategy_row(uid, grid_data)
-
-    @show_error_dialog
-    def _handle_strategy_stopped(self, uid: str):
-        """处理策略停止事件"""
-        grid_data = self.strategy_wrapper.get_strategy_data(uid)
-        if grid_data:
-            grid_data.row_dict["运行状态"] = "已停止"
-            self.grid_table.update_strategy_row(uid, grid_data)
 
     @show_error_dialog
     def check_client_status(self) -> bool:

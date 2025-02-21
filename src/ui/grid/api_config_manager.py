@@ -243,54 +243,61 @@ class APIConfigManager(QObject):
         }
 
     def load_config(self):
-        """加载API配置"""
-        try:
-            # 确保文件存在
-            os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-            if os.path.exists(self.config_path):
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    content = f.read().strip()
-                    if not content:  # 空文件
-                        self.config = self._create_default_config()
-                    else:
-                        self.config = json.loads(content)
-            else:
-                self.config = self._create_default_config()
-            
-            # 设置当前交易所
-            current_exchange = self.config.get('current', '').lower()
-            if not current_exchange:
-                available_exchanges = self.client_factory.registry.get_available_exchanges(self.inst_type)
-                current_exchange = available_exchanges[0] if available_exchanges else "bitget"
-                self.config['current'] = current_exchange
+            """加载API配置"""
+            try:
+                # 确保文件存在
+                os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+                if os.path.exists(self.config_path):
+                    with open(self.config_path, 'r', encoding='utf-8') as f:
+                        content = f.read().strip()
+                        # print(f"[APIConfigManager] 从文件加载的原始内容:\n{content}")
+                        if not content:  # 空文件
+                            self.config = self._create_default_config()
+                            # print(f"[APIConfigManager] 文件为空，使用默认配置: {json.dumps(self.config, indent=2)}")
+                        else:
+                            self.config = json.loads(content)
+                            # print(f"[APIConfigManager] 解析后的配置:\n{json.dumps(self.config, indent=2)}")
+                else:
+                    self.config = self._create_default_config()
+                    # print(f"[APIConfigManager] 配置文件不存在，使用默认配置: {json.dumps(self.config, indent=2)}")
+                
+                # 设置当前交易所
+                current_exchange = self.config.get('current', '').lower()
+                if not current_exchange:
+                    available_exchanges = self.client_factory.registry.get_available_exchanges(self.inst_type)
+                    current_exchange = available_exchanges[0] if available_exchanges else "bitget"
+                    self.config['current'] = current_exchange
+                    # print(f"[APIConfigManager] 未指定当前交易所，设置为: {current_exchange}")
 
-            # 获取当前交易所的API配置
-            exchange_config = self.config.get(current_exchange, {})
-            
-            # 更新UI
-            self.current_exchange = current_exchange.capitalize()
-            self.exchange_combo.blockSignals(True)
-            self.exchange_combo.setCurrentText(self.current_exchange)
-            self.exchange_combo.blockSignals(False)
+                # 获取当前交易所的API配置
+                exchange_config = self.config.get(current_exchange, {})
+                # print(f"[APIConfigManager] 当前交易所 {current_exchange} 的配置: {json.dumps(exchange_config, indent=2)}")
+                
+                # 更新UI
+                self.current_exchange = current_exchange.capitalize()
+                self.exchange_combo.blockSignals(True)
+                self.exchange_combo.setCurrentText(self.current_exchange)
+                self.exchange_combo.blockSignals(False)
 
-            self.user_id_input.setText(exchange_config.get('user_id', ''))
-            self.api_key_input.setText(exchange_config.get('api_key', ''))
-            self.secret_key_input.setText(exchange_config.get('api_secret', ''))
-            self.passphrase_input.setText(exchange_config.get('passphrase', ''))
+                self.user_id_input.setText(exchange_config.get('user_id', ''))
+                self.api_key_input.setText(exchange_config.get('api_key', ''))
+                self.secret_key_input.setText(exchange_config.get('api_secret', ''))
+                self.passphrase_input.setText(exchange_config.get('passphrase', ''))
 
-            # 如果有完整的API配置，发送更新信号
-            if all([
-                exchange_config.get('api_key'),
-                exchange_config.get('api_secret'),
-                exchange_config.get('passphrase')
-            ]):
-                self.config_updated.emit(exchange_config)
+                # 如果有完整的API配置，发送更新信号
+                if all([
+                    exchange_config.get('api_key'),
+                    exchange_config.get('api_secret'),
+                    exchange_config.get('passphrase')
+                ]):
+                    # print(f"[APIConfigManager] API 配置完整，发送 config_updated 信号")
+                    self.config_updated.emit(exchange_config)
 
-        except Exception as e:
-            error_msg = f"加载配置失败: {str(e)}"
-            print(f"[APIConfigManager] {error_msg}")
-            print(f"[APIConfigManager] 错误详情: {traceback.format_exc()}")
-            self.config_error.emit(error_msg)
+            except Exception as e:
+                error_msg = f"加载配置失败: {str(e)}"
+                print(f"[APIConfigManager] {error_msg}")
+                print(f"[APIConfigManager] 错误详情: {traceback.format_exc()}")
+                self.config_error.emit(error_msg)
 
     def save_config(self, auto_save: bool = False):
         """保存API配置"""
