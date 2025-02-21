@@ -1,4 +1,5 @@
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Optional
 
 from src.exchange.bitget.exceptions import BitgetAPIException
 from ..consts import GET, POST
@@ -6,7 +7,6 @@ from .spot.order_api import SpotOrderApi
 from .mix.order_api import MixOrderApi
 from src.utils.logger.log_helper import api_logger
 from src.utils.error.error_handler import error_handler
-
 
 class BitgetSpotAPI:
     def __init__(self, api_key, api_secret_key, passphrase):
@@ -46,30 +46,31 @@ class BitgetSpotAPI:
         # print("[BitgetSpotAPI] get_pairs: ", response)
         return response
 
+    @error_handler()
+    def get_account_assets(self, coin: Optional[str] = None, asset_type: str = 'hold_only'):
+        """获取账户资产"""
+        params = {"assetType": asset_type}
+        if coin:
+            params["coin"] = coin
+        
+        response = self.order_api._request_with_params(GET, '/api/v2/spot/account/assets', params)
+        self.logger.info(f"获取账户资产返回: {response}")
+        return response
 
     @error_handler()
-    def place_order(self, symbol, size, trade_side, side=None, price=None, client_oid=None):
+    def place_order(self, symbol, size, trade_side, side, orderType, price=None, clientOid=None):
         self.logger.info(f"下现货订单 - {symbol} - {trade_side} - {size}")
         params = {
             "symbol": symbol,
             "size": size,
-            "orderType": "market"
+            "orderType": orderType,
+            "side": side
         }
         
-        if trade_side == "open":
-            params["side"] = "buy"
-        elif trade_side == "close":
-            params["side"] = "sell"  
-        else:
-            err_msg = "trade_side 参数必须是 'open' 或 'close'"
-            self.logger.error(err_msg)
-            raise ValueError(err_msg)
-
-        if price:
-            params["orderType"] = "limit"
+        if price and orderType == "limit":
             params["price"] = price
-        if client_oid:
-            params["clientOid"] = client_oid
+        if clientOid:
+            params["clientOid"] = clientOid
 
         self.logger.info(f"现货-订单-参数: {params}")
         
@@ -173,31 +174,26 @@ class BitgetMixAPI:
             return e
 
     @error_handler()
-    def place_order(self, symbol, size, trade_side, side, price=None, client_oid=None):
-        self.logger.info(f"合约-下订单 - {symbol} - {trade_side} - {side} - {size}")
-        if trade_side not in ["open", "close"]:
-            err_msg = "tradeSide 必须为 'open' 或 'close'"
-            self.logger.error(err_msg)
-            raise ValueError(err_msg)
-
+    def place_order(self, symbol, size, side, tradeSide, orderType, productType="USDT-FUTURES", price=None, clientOid=None, marginMode="crossed", marginCoin="USDT"):
+        self.logger.info(f"合约-下订单 - {symbol} - {tradeSide} - {side} - {size}")
         params = {
             "symbol": symbol,
             "side": side,
-            "tradeSide": trade_side,
+            "tradeSide": tradeSide,
             "size": size,
-            "productType": "USDT-FUTURES",
-            "marginMode": "crossed",
-            "marginCoin": "USDT",
-            "orderType": "market"
+            "productType": productType,  # 添加必填参数
+            "marginMode": marginMode,
+            "marginCoin": marginCoin,
+            "orderType": orderType
         }
-        if price:
-            params["orderType"] = "limit"
+        if price and orderType == "limit":
             params["price"] = price
-        if client_oid:
-            params["clientOid"] = client_oid
+        if clientOid:
+            params["clientOid"] = clientOid
+        
         self.logger.info(f"合约-订单-参数: {params}")
         response = self.order_api.placeOrder(params)
-        self.logger.info(f"合约-下单-返回 - {response}")
+        self.logger.info(f"合约-下单-返回: {response}")
         return response
 
     @error_handler()

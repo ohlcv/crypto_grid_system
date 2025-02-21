@@ -414,8 +414,16 @@ class GridStrategyTab(QWidget):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            if self.strategy_wrapper.close_position(uid, self.exchange_client):
-                self.show_message("平仓成功", "策略持仓已平仓！")
+            success, message = self.strategy_wrapper.close_position(uid, self.exchange_client)
+            if success:
+                if message == "无可平仓数量":
+                    self.show_message("无需平仓", "当前币种无持仓，无需平仓！")
+                elif message == "平仓成功":
+                    self.show_message("平仓成功", "该币持仓已全平！")
+                else:
+                    self.show_message("操作完成", message)  # 其他情况显示具体消息
+            else:
+                self.show_error_message(message)
 
     @show_error_dialog
     def _handle_strategy_refresh(self, uid: str):
@@ -478,6 +486,7 @@ class GridStrategyTab(QWidget):
     @show_error_dialog
     def _handle_strategy_error(self, uid: str, error_msg: str):
         """处理策略错误事件"""
+        print(f"[GridStrategyTab] 处理策略错误 - UID: {uid}, 错误: {error_msg}")
         self.show_error_message(error_msg)
         if uid:
             self.grid_table.update_strategy_row(

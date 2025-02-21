@@ -1,5 +1,6 @@
 # src/exchange/base/base_client.py
 
+from abc import abstractmethod
 from typing import Dict, List, Optional, Union
 from decimal import Decimal
 from dataclasses import dataclass, field
@@ -36,28 +37,66 @@ class WSRequest:
 
 @dataclass
 class OrderRequest:
-    """订单请求"""
+    """统一的订单请求格式"""
     symbol: str                    # 交易对
-    order_type: OrderType          # 订单类型
     side: OrderSide               # 买卖方向
     trade_side: TradeSide         # 开平方向
-    volume: Decimal               # 数量
-    price: Optional[Decimal]      # 价格（市价单为None）
-    client_order_id: Optional[str] # 客户端订单ID
+    order_type: OrderType         # 订单类型
+    volume: Decimal               # 数量（base amount 或 quote amount，视情况而定）
+    price: Optional[Decimal] = None  # 价格（限价单使用）
+    client_order_id: Optional[str] = None  # 客户端订单ID
+    quote_amount: Optional[Decimal] = None  # USDT 数量（现货市价买单使用）
+    base_price: Optional[Decimal] = None    # 基础货币价格（用于计算 size）
+    
+    # 合约专用字段
+    product_type: Optional[str] = None     # 产品类型
+    margin_mode: Optional[str] = None      # 保证金模式
+    margin_coin: Optional[str] = None      # 保证金币种
 
 @dataclass
 class OrderResponse:
     """订单响应"""
+    status: str                    # success/failed
+    error_message: Optional[str]   # 错误信息
+    order_id: str                  # 订单ID
+    side: OrderSide               # 买卖方向
+    trade_side: TradeSide         # 交易方向（开仓/平仓）
+    
+    # 成交信息
+    filled_amount: Decimal = Decimal('0')  # 成交数量
+    filled_price: Decimal = Decimal('0')   # 成交均价
+    filled_value: Decimal = Decimal('0')   # 成交金额
+    fee: Decimal = Decimal('0')            # 手续费
+    
+    # 开仓专用
+    open_time: Optional[int] = None        # 开仓时间戳
+    
+    # 平仓专用
+    profit: Optional[Decimal] = None       # 平仓盈亏
+    open_price: Optional[Decimal] = None   # 开仓价格
+    close_time: Optional[int] = None       # 平仓时间戳
+
+@dataclass
+class FillResponse:
+    """成交明细响应"""
+    # 必需参数放在前面
+    trade_id: str                 # 成交ID
     order_id: str                 # 订单ID
-    client_order_id: str          # 客户端订单ID
-    status: str                   # 订单状态
     symbol: str                   # 交易对
     side: OrderSide              # 买卖方向
     trade_side: TradeSide        # 开平方向
-    volume: Decimal              # 数量
-    price: Decimal               # 价格
-    created_time: int            # 创建时间
-    error_message: Optional[str]  # 错误信息
+    filled_time: int             # 成交时间戳
+    filled_amount: Decimal       # 成交数量
+    filled_price: Decimal        # 成交价格
+    filled_value: Decimal        # 成交金额
+    fee: Decimal                 # 手续费
+    fee_currency: str            # 手续费币种
+    
+    # 可选参数放在后面
+    profit: Optional[Decimal] = None    # 平仓盈亏
+    position_side: Optional[str] = None # 持仓方向
+    client_order_id: Optional[str] = None  # 客户端订单ID
+    error_message: Optional[str] = None    # 错误信息
 
 class BaseClient(QObject):
     """交易所客户端基类"""
@@ -72,14 +111,14 @@ class BaseClient(QObject):
     disconnected = Signal()                   # 连接断开
     connection_status = Signal(bool)          # is_connected
     error_occurred = Signal(str)              # error_type, error_message
-    ws_status_changed = Signal(dict)          # 添加WS状态变化信号
+    ws_status_changed = Signal(bool, bool)          # 添加WS状态变化信号
 
     def __init__(self, inst_type: InstType):
         super().__init__()
         self.inst_type = inst_type
         self._connected = False
         self._subscribed_symbols = set()
-        self.exchange = None
+        self.exchange: str = None  # 交易所名称
         self.instance_id = None  # 实例标识符
 
     def connect(self) -> bool:
@@ -139,17 +178,20 @@ class BaseClient(QObject):
         """取消订阅"""
         raise NotImplementedError
 
+    @abstractmethod
     def place_order(self, request: OrderRequest) -> OrderResponse:
-        """
-        下单
-        
-        Args:
-            request: 订单请求
-            
-        Returns:
-            订单响应
-        """
-        raise NotImplementedError
+        """统一下单接口"""
+        pass
+
+    @abstractmethod
+    def get_fills(self, symbol: str, order_id: str) -> List[OrderResponse]:
+        """获取成交明细"""
+        pass
+
+    @abstractmethod
+    def all_close_positions(self, symbol: str, side: Optional[str] = None) -> List[OrderResponse]:
+        """一键平仓"""
+        pass
 
     def cancel_order(self, order_id: str, symbol: str) -> bool:
         """撤单"""

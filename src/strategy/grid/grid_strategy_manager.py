@@ -164,25 +164,15 @@ class GridStrategyManager(QObject):
             trader = self._strategies.get(uid)
             if trader and trader._running:
                 print(f"[GridStrategyManager] 策略已在运行中")
-                if trader._thread:
-                    print(f"  线程名称: {trader._thread.name}")
-                    print(f"  线程ID: {trader._thread.ident}")
                 return False
 
             # 如果不存在trader或trader已停止，创建新的trader
             if not trader:
                 print(f"[GridStrategyManager] 创建新的trader实例...")
                 trader = GridTrader(grid_data)
+                trader.error_occurred.connect(self._handle_strategy_error)  # 连接错误信号
                 self._strategies[uid] = trader
-
-            # 获取并缓存交易对参数
-            print(f"[GridStrategyManager] 开始缓存交易对参数...")
-            if not self._cache_trading_params(trader.grid_data, exchange_client):
-                error_msg = "获取交易对参数失败"
-                print(f"[GridStrategyManager] {error_msg}")
-                self.strategy_error.emit(uid, error_msg)
-                return False
-                
+            
             # 设置exchange_client
             print(f"[GridStrategyManager] 设置交易所客户端...")
             trader.set_client(exchange_client)
@@ -191,22 +181,13 @@ class GridStrategyManager(QObject):
             original_profit = grid_data.total_realized_profit
             print(f"[GridStrategyManager] 保持原有实现盈亏: {original_profit}")
             
-            # 启动策略
-            # print(f"[GridStrategyManager] 开始启动策略...")
+            # 启动策略（参数检查和缓存由 GridTrader.start 处理）
             if trader.start():
-                # print(f"[GridStrategyManager] 策略启动成功，发送启动信号...")
                 self.strategy_started.emit(uid)
-                
-                # 确保运行状态更新但不影响实现盈亏
-                # print(f"[GridStrategyManager] 更新策略状态...")
                 grid_data.total_realized_profit = original_profit
                 grid_data.row_dict["实现盈亏"] = str(original_profit)
                 grid_data.row_dict["运行状态"] = "运行中"
-                
-                # print(f"[GridStrategyManager] 发送数据更新信号...")
-                # print(f"[GridStrategyManager] 更新前的row_dict: {grid_data.row_dict}")
                 grid_data.data_updated.emit(uid)
-                # print(f"[GridStrategyManager] 数据更新信号已发送")
                 print(f"[GridStrategyManager] 策略启动完成: {uid}")
                 return True
                 
@@ -217,64 +198,6 @@ class GridStrategyManager(QObject):
             print(f"[GridStrategyManager] 启动策略失败: {e}")
             print(f"[GridStrategyManager] 错误详情: {traceback.format_exc()}")
             self.strategy_error.emit(uid, str(e))
-            return False
-
-    def _cache_trading_params(self, grid_data: GridData, exchange_client: BaseClient) -> bool:
-        """获取并缓存交易对参数
-        
-        Args:
-            grid_data: 网格策略数据
-            exchange_client: 交易所客户端
-            
-        Returns:
-            bool: 是否成功获取并缓存参数
-        """
-        try:
-            print(f"\n[GridStrategyManager] === 获取交易对参数 ===")
-            print(f"交易对: {grid_data.pair}")
-            
-            # 获取交易对信息
-            symbol_normalized = grid_data.pair.replace('/', '')
-            is_spot = grid_data.inst_type == InstType.SPOT
-            pair_info = exchange_client.rest_api.get_pairs(symbol=symbol_normalized)
-            
-            if pair_info.get('code') != '00000':
-                error_msg = f"获取交易对信息失败: {pair_info.get('msg')}"
-                print(f"[GridStrategyManager] {error_msg}")
-                return False
-                
-            # 缓存交易参数
-            pair_data = pair_info['data'][0]
-            print(f"[GridStrategyManager] 原始数据: {pair_data}")
-            
-            if is_spot:
-                # 现货参数
-                grid_data.quantity_precision = int(pair_data.get('quantityPrecision', 4))
-                grid_data.price_precision = int(pair_data.get('pricePrecision', 2))
-                grid_data.min_trade_amount = Decimal(str(pair_data.get('minTradeAmount', '0')))
-                grid_data.min_trade_value = Decimal(str(pair_data.get('minTradeUSDT', '5')))
-                print(f"[GridStrategyManager] 现货参数已缓存:")
-                print(f"  数量精度: {grid_data.quantity_precision}")
-                print(f"  价格精度: {grid_data.price_precision}")
-                print(f"  最小数量: {grid_data.min_trade_amount}")
-                print(f"  最小金额: {grid_data.min_trade_value}")
-            else:
-                # 合约参数
-                grid_data.quantity_precision = int(pair_data.get('volumePlace', 4))
-                grid_data.price_precision = int(pair_data.get('pricePlace', 2))
-                grid_data.min_trade_amount = Decimal(str(pair_data.get('minTradeNum', '0')))
-                grid_data.min_trade_value = Decimal(str(pair_data.get('minTradeUSDT', '5')))
-                print(f"[GridStrategyManager] 合约参数已缓存:")
-                print(f"  数量精度: {grid_data.quantity_precision}")
-                print(f"  价格精度: {grid_data.price_precision}")
-                print(f"  最小数量: {grid_data.min_trade_amount}")
-                print(f"  最小金额: {grid_data.min_trade_value}")
-
-            return True
-
-        except Exception as e:
-            print(f"[GridStrategyManager] 缓存交易参数失败: {e}")
-            print(f"[GridStrategyManager] 错误详情: {traceback.format_exc()}")
             return False
 
     def process_market_data(self, pair: str, data: dict):
@@ -465,14 +388,14 @@ class GridStrategyManager(QObject):
         print(f"[GridStrategyManager] Strategy error - {uid}: {error_msg}")
         self.strategy_error.emit(uid, error_msg)
 
-    def close_positions(self, uid: str, exchange_client: BaseClient) -> bool:
+    def close_positions(self, uid: str, exchange_client: BaseClient) -> tuple[bool, str]:
         """
         平掉指定策略的所有持仓
         Args:
             uid: 策略ID
             exchange_client: 交易所客户端
         Returns:
-            bool: 是否成功平仓
+            tuple[bool, str]: (是否成功, 状态消息)
         """
         print(f"\n[GridStrategyManager] === 平仓操作 === {uid}")
         try:
@@ -480,45 +403,35 @@ class GridStrategyManager(QObject):
             grid_data = self._data.get(uid)
             if not grid_data:
                 print(f"[GridStrategyManager] 错误: 策略数据不存在 - {uid}")
-                return False
+                return False, "策略数据不存在"
 
-            # 检查是否有持仓
-            # metrics = grid_data.calculate_position_metrics()
-            # if metrics['total_value'] <= 0:
-            #     print(f"[GridStrategyManager] 策略 {uid} 无持仓，无需平仓")
-            #     return True
-                
-            # print(f"[GridStrategyManager] 当前持仓信息:")
-            # print(f"  持仓价值: {metrics['total_value']}")
-            # print(f"  持仓均价: {metrics['avg_price']}")
-            # print(f"  未实现盈亏: {metrics['unrealized_pnl']}")
-                    
             # 创建临时的GridTrader实例来执行平仓
             print(f"[GridStrategyManager] 创建临时交易器执行平仓...")
             temp_trader = GridTrader(grid_data)
             temp_trader.set_client(exchange_client)
+            temp_trader.error_occurred.connect(self._handle_strategy_error)  # 连接错误信号
             
             # 连接错误信号以便转发
             temp_trader.error_occurred.connect(self._handle_strategy_error)
             
             # 执行平仓
             print(f"[GridStrategyManager] 开始执行平仓...")
-            success = temp_trader._close_all_positions("手动平仓")
+            success, message = temp_trader._close_all_positions("手动平仓")
             
             if success:
-                print(f"[GridStrategyManager] 平仓成功")
+                print(f"[GridStrategyManager] 平仓操作完成: {message}")
                 # 如果策略正在运行，需要停止它
                 if self.is_strategy_running(uid):
                     print(f"[GridStrategyManager] 停止正在运行的策略...")
                     self.stop_strategy(uid)
             else:
-                print(f"[GridStrategyManager] 平仓失败")
-                
-            return success
+                print(f"[GridStrategyManager] 平仓失败: {message}")
+            
+            return success, message
                 
         except Exception as e:
             error_msg = f"平仓失败: {str(e)}"
             print(f"[GridStrategyManager] {error_msg}")
             print(f"[GridStrategyManager] 错误详情: {traceback.format_exc()}")
             self.strategy_error.emit(uid, error_msg)
-            return False
+            return False, error_msg

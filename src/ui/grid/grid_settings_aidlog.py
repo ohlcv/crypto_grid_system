@@ -435,11 +435,6 @@ class GridDialog(QDialog):
 
             # 计算每格投入 
             step = budget / layers
-            if step < 5:  # 再次验证每格投资额
-                raise ValueError(
-                    f"每格投资金额 ({step:.2f} USDT) 小于最小交易额 5 USDT\n"
-                    f"请增加总预算或减少网格层数！"
-                )
 
             # 清空表格重新生成
             self.table.clear_table()

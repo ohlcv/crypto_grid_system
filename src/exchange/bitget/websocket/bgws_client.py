@@ -168,8 +168,15 @@ class BGWebSocketClient(QObject):
         """连接状态"""
         return self._is_connected and (not self._is_private or self._login_status)
 
-    def subscribe(self, request: WSRequest) -> None:
-        """发送订阅请求"""
+    def subscribe(self, request: WSRequest) -> bool:
+        """发送订阅请求
+        
+        Args:
+            request (WSRequest): 订阅请求对象
+        
+        Returns:
+            bool: 订阅是否成功
+        """
         try:
             # 创建SDK的订阅请求对象
             subscribe_req = SubscribeReq(
@@ -181,13 +188,22 @@ class BGWebSocketClient(QObject):
             # 使用SDK的订阅方法
             self._ws_client.subscribe([subscribe_req])
             self.logger.info(f"已订阅: {request.pair} - {request.channel}")
+            return True  # 订阅请求成功发送
             
         except Exception as e:
             self.logger.error(f"订阅失败: {str(e)}")
             self.error.emit(f"Subscribe failed: {str(e)}")
+            return False  # 订阅失败
 
-    def unsubscribe(self, request: WSRequest) -> None:
-        """发送取消订阅请求"""
+    def unsubscribe(self, request: WSRequest) -> bool:
+        """发送取消订阅请求
+        
+        Args:
+            request (WSRequest): 取消订阅请求对象
+        
+        Returns:
+            bool: 取消订阅是否成功
+        """
         try:
             # 创建SDK的订阅请求对象
             subscribe_req = SubscribeReq(
@@ -199,7 +215,9 @@ class BGWebSocketClient(QObject):
             # 使用SDK的取消订阅方法
             self._ws_client.unsubscribe([subscribe_req])
             self.logger.info(f"已取消订阅: {request.pair} - {request.channel}")
+            return True  # 取消订阅请求成功发送
             
         except Exception as e:
             self.logger.error(f"取消订阅失败: {str(e)}")
             self.error.emit(f"Unsubscribe failed: {str(e)}")
+            return False  # 取消订阅失败

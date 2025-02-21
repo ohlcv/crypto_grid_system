@@ -310,16 +310,14 @@ class StrategyManagerWrapper(QObject):
             self.strategy_error.emit("", error_msg)
             return 0, 0
 
-    def close_position(self, uid: str, exchange_client: BaseClient) -> bool:
+    def close_position(self, uid: str, exchange_client: BaseClient) -> tuple[bool, str]:
         """
         平仓操作
-        
         Args:
             uid: 策略ID
             exchange_client: 交易所客户端
-            
         Returns:
-            bool: 是否平仓成功
+            tuple[bool, str]: (是否成功, 状态消息)
         """
         try:
             grid_data = self.strategy_manager.get_strategy_data(uid)
@@ -331,18 +329,18 @@ class StrategyManagerWrapper(QObject):
                 raise ValueError("请先停止策略再进行平仓操作！")
 
             # 调用策略管理器的平仓方法
-            success = self.strategy_manager.close_positions(uid, exchange_client)
+            success, message = self.strategy_manager.close_positions(uid, exchange_client)
             if success:
                 # 保存数据
                 self.save_strategies(show_message=False)
-            return success
+            return success, message
 
         except Exception as e:
             error_msg = f"平仓失败: {str(e)}"
             print(f"[StrategyManagerWrapper] {error_msg}")
             print(f"[StrategyManagerWrapper] 错误详情: {traceback.format_exc()}")
             self.strategy_error.emit(uid, error_msg)
-            return False
+            return False, error_msg
 
     def save_strategies(self, show_message: bool = True):
         def _save():
