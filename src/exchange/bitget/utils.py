@@ -25,7 +25,7 @@ def signByRSA(message, secret_key):
 # def pre_hash(timestamp, method, request_path, body = ""):
 #     return str(timestamp) + str.upper(method) + request_path + body
 
-def pre_hash(timestamp, method, request_path, body):
+def pre_hash(timestamp, method, request_path, body = ""):
     print(f"\n[utils.pre_hash] === 开始执行 pre_hash ===")
     print(f"[utils.pre_hash] 参数 - timestamp: {timestamp} (类型: {type(timestamp)})")
     print(f"[utils.pre_hash] 参数 - method: {method} (类型: {type(method)})")

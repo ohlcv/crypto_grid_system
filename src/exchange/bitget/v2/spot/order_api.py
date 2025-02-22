@@ -1,3 +1,4 @@
+# /exchange/bitget/v2/spot/
 from ...client import Client
 from ...consts import GET, POST
 

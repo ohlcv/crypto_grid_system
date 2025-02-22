@@ -38,7 +38,7 @@ class Client(object):
             print("method:", method)
             print("body:", body)
             print("headers:", header)
-            # print("sign:", sign)
+            print("sign:", sign)
             self.first = False
 
         # send request
@@ -49,7 +49,6 @@ class Client(object):
         elif method == c.POST:
             response = requests.post(url, data=body, headers=header)
             # print("response : ",response.text)
-            #response = requests.post(url, json=body, headers=header)
         elif method == c.DELETE:
             response = requests.delete(url, headers=header)
 

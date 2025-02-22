@@ -137,7 +137,7 @@ class BaseClient(QObject):
             connected = ws_status.get("public", False) and ws_status.get("private", False)
             return connected
         except Exception as e:
-            print(f"[BaseClient] 检查连接状态出错: {e}")
+            # print(f"[BaseClient] 检查连接状态出错: {e}")
             return False
 
     def get_ws_status(self) -> Dict[str, bool]:

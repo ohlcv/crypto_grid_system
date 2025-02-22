@@ -1,6 +1,6 @@
-
-from bitget.client import Client
-from bitget.consts import GET
+# /exchange/bitget/v2/mix/
+from ...client import Client
+from ...consts import GET, POST
 
 
 class MarketApi(Client):

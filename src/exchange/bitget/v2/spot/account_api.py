@@ -1,6 +1,6 @@
-
-from bitget.client import Client
-from bitget.consts import GET, POST
+# /exchange/bitget/v2/spot/
+from ...client import Client
+from ...consts import GET, POST
 
 
 class AccountApi(Client):
