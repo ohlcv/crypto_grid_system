@@ -40,8 +40,8 @@ class GridStrategyManager(StrategyManagerInterface):
         
         with self._lock:
             if uid in self._data:
-                # error_msg = f"策略 {uid} 已存在"
-                # print(f"[GridStrategyManager] {error_msg}")
+                error_msg = f"策略 {uid} 已存在"
+                print(f"[GridStrategyManager] {error_msg}")
                 # self.signals.strategy_error.emit(uid, error_msg)
                 return None
 

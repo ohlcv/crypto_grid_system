@@ -32,16 +32,16 @@ def show_error_dialog(func):
     return wrapper
 
 class GridStrategyTab(QWidget):
-    """网格策略Tab页 - 重构后的主类实现"""
-    update_ui_signal = Signal(str)  # uid 参数
+    update_ui_signal = Signal(str)
 
     def __init__(self, inst_type: InstType, client_factory: ExchangeClientFactory):
         super().__init__()
-        self.is_closing = False  # 添加关闭标志
+        self.is_closing = False
         self.inst_type = inst_type
         self.client_factory = client_factory
         self.tab_id = str(uuid.uuid4())
         self.exchange_client: Optional[BaseClient] = None
+        self._is_loading = False  # 添加加载状态标志
         
         self.api_manager = APIConfigManager(self.tab_id, self.inst_type, client_factory)
         self.grid_controls = GridControls(self.inst_type)
@@ -51,9 +51,137 @@ class GridStrategyTab(QWidget):
         self.setup_ui()
         self.api_manager.load_config()
         self._connect_signals()
+
+        # 启动时自动连接交易所
         QTimer.singleShot(500, self._auto_connect_exchange)
-        self.strategy_wrapper.load_strategies()
         self.update_ui_signal.connect(self._update_ui_in_main_thread)
+
+    def _connect_signals(self):
+        try:
+            print(f"[GridStrategyTab] === 开始连接信号 ===")
+            self.api_manager.config_error.connect(self.show_error_message)
+            self.api_manager.config_updated.connect(self._handle_api_config_updated)
+            self.api_manager.exchange_changed.connect(self._handle_exchange_changed)
+            self.api_manager.save_config_signal.connect(lambda msg: self.show_message("保存配置", msg))
+            self.api_manager.load_config_signal.connect(lambda msg: self.show_message("加载配置", msg))
+            self.api_manager.check_status_signal.connect(self._handle_check_status_feedback)
+
+            self.grid_controls.pair_added.connect(self._handle_pair_added)
+            self.grid_controls.stop_all_requested.connect(self._handle_stop_all_requested)
+            self.grid_controls.operation_toggled.connect(self._handle_operation_toggled)
+            self.grid_controls.position_mode_changed.connect(self._handle_position_mode_changed)
+            self.grid_controls.dialog_requested.connect(lambda type, title, msg: self.show_dialog(type, title, msg))
+            
+            self.grid_table.strategy_setting_requested.connect(self._handle_strategy_setting)
+            self.grid_table.strategy_start_requested.connect(self._handle_strategy_start)
+            self.grid_table.strategy_stop_requested.connect(self._handle_strategy_stop)
+            self.grid_table.strategy_delete_requested.connect(self._handle_strategy_delete)
+            self.grid_table.strategy_close_requested.connect(self._handle_strategy_close)
+            self.grid_table.strategy_refresh_requested.connect(self._handle_strategy_refresh)
+            self.grid_table.dialog_requested.connect(lambda type, title, msg: self.show_dialog(type, title, msg))
+            
+            self.strategy_wrapper.strategy_added.connect(self._handle_strategy_added)
+            self.strategy_wrapper.strategy_updated.connect(self._handle_strategy_updated)
+            self.strategy_wrapper.strategy_error.connect(self._handle_strategy_error)
+            self.strategy_wrapper.strategy_started.connect(self._handle_strategy_started)
+            self.strategy_wrapper.strategy_stopped.connect(self._handle_strategy_stopped)
+            self.strategy_wrapper.strategy_deleted.connect(self._handle_strategy_deleted)
+
+            self.client_factory.client_status_changed.connect(self._handle_client_status_changed)
+            self.client_factory.client_created.connect(self._handle_client_created)
+            
+            print(f"[GridStrategyTab] === 信号连接完成 ===")
+        except Exception as e:
+            print(f"[GridStrategyTab] 连接信号时发生错误: {e}")
+            print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
+
+    def _handle_client_status_changed(self, tab_id: str, status: str):
+        """处理客户端状态变化，并在连接成功时自动加载策略"""
+        print(f"[GridStrategyTab] 收到客户端状态变化: Tab ID={tab_id}, Status={status}")
+        if tab_id == self.tab_id:
+            self.api_manager.update_connection_status(status)
+            if status == "已连接" and not self.is_closing and not self._is_loading:
+                print(f"[GridStrategyTab] 客户端连接成功，触发自动加载策略")
+                QTimer.singleShot(100, self._handle_load_strategies)  # 延迟 100ms 确保状态稳定
+
+    def _auto_connect_exchange(self):
+        """仅在初次启动时尝试连接，并检查连接状态以触发加载"""
+        try:
+            if self.exchange_client:
+                return
+
+            existing_client = self.client_factory.get_client(self.tab_id, self.inst_type)
+            if existing_client:
+                self.exchange_client = existing_client
+                self._connect_client_signals(existing_client)
+                # 检查初始状态
+                if existing_client.is_connected:
+                    print(f"[GridStrategyTab] 已有客户端已连接，触发自动加载策略")
+                    QTimer.singleShot(100, self._handle_load_strategies)
+                return
+
+            config = self.api_manager.get_current_config()
+            if all([config.get('api_key'), config.get('api_secret'), config.get('passphrase')]):
+                self.exchange_client = self.client_factory.create_client(
+                    self.tab_id,
+                    self.api_manager.current_exchange.lower(),
+                    config,
+                    self.inst_type
+                )
+                print(f"[GridStrategyTab] 自动连接完成: {self.inst_type.value}")
+                # 等待连接完成再检查状态
+                QTimer.singleShot(2000, self._check_and_load_strategies)  # 延迟 2 秒检查状态
+        except Exception as e:
+            print(f"[GridStrategyTab] 自动连接失败: {e}")
+
+    def _check_and_load_strategies(self):
+        """检查客户端状态并触发加载"""
+        if self.exchange_client and self.exchange_client.is_connected and not self._is_loading:
+            print(f"[GridStrategyTab] 客户端已连接，触发自动加载策略")
+            self._handle_load_strategies()
+
+    @show_error_dialog
+    def _handle_load_strategies(self, checked=False):
+        if self._is_loading:
+            print(f"[GridStrategyTab] 加载已在进行中，跳过")
+            return
+        
+        self._is_loading = True
+        print(f"[GridStrategyTab] 加载策略配置触发")
+        
+        try:
+            # 先加载策略数据
+            if self.check_client_status():
+                self.strategy_wrapper.load_strategies(self.exchange_client, show_message=False)
+            else:
+                self.strategy_wrapper.load_strategies(show_message=False)
+            
+            # 等待加载线程完成（如果有异步加载）
+            if hasattr(self.strategy_wrapper, '_load_thread') and self.strategy_wrapper._load_thread:
+                self.strategy_wrapper._load_thread.join(timeout=2)
+            
+            # 清空表格并重新添加所有策略
+            self.grid_table.clearContents()
+            self.grid_table.setRowCount(0)
+            print(f"[GridStrategyTab] 清空现有表格行")
+            
+            loaded_count = 0
+            for uid in self.strategy_wrapper.get_all_strategy_uids():
+                grid_data = self.strategy_wrapper.get_strategy_data(uid)
+                if grid_data:
+                    try:
+                        grid_data.data_updated.disconnect()
+                    except TypeError:
+                        pass
+                    grid_data.data_updated.connect(self._handle_strategy_updated)
+                    print(f"[GridStrategyTab] 重新连接 data_updated 信号 for {uid}")
+                    self.grid_table.add_strategy_row(grid_data)
+                    loaded_count += 1
+            
+            print(f"[GridStrategyTab] 加载完成，实际加载策略数: {loaded_count}")
+            self.show_message("加载策略配置", f"已加载 {loaded_count} 个策略！")
+        finally:
+            self._is_loading = False
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -68,6 +196,11 @@ class GridStrategyTab(QWidget):
         
         layout.addWidget(self.grid_table)
         self.setLayout(layout)
+
+    def _auto_load_strategies(self):
+        """启动时自动加载策略配置"""
+        print(f"[GridStrategyTab] 启动时自动加载策略配置")
+        self._handle_load_strategies()
 
     def _handle_strategy_refresh(self, uid: str):
         grid_data = self.strategy_wrapper.get_strategy_data(uid)
@@ -144,55 +277,18 @@ class GridStrategyTab(QWidget):
         
         self.show_dialog("error", "错误", error_msg)
 
-    def _connect_signals(self):
-        try:
-            print(f"[GridStrategyTab] === 开始连接信号 ===")
-            self.api_manager.config_error.connect(self.show_error_message)
-            self.api_manager.config_updated.connect(self._handle_api_config_updated)
-            self.api_manager.exchange_changed.connect(self._handle_exchange_changed)
-            self.api_manager.save_config_signal.connect(lambda msg: self.show_message("保存配置", msg))
-            self.api_manager.load_config_signal.connect(lambda msg: self.show_message("加载配置", msg))
-            self.api_manager.check_status_signal.connect(self._handle_check_status_feedback)
-
-            self.grid_controls.pair_added.connect(self._handle_pair_added)
-            self.grid_controls.stop_all_requested.connect(self._handle_stop_all_requested)
-            self.grid_controls.operation_toggled.connect(self._handle_operation_toggled)
-            self.grid_controls.position_mode_changed.connect(self._handle_position_mode_changed)
-            self.grid_controls.dialog_requested.connect(lambda type, title, msg: self.show_dialog(type, title, msg))
-            
-            self.grid_table.strategy_setting_requested.connect(self._handle_strategy_setting)
-            self.grid_table.strategy_start_requested.connect(self._handle_strategy_start)
-            self.grid_table.strategy_stop_requested.connect(self._handle_strategy_stop)
-            self.grid_table.strategy_delete_requested.connect(self._handle_strategy_delete)
-            self.grid_table.strategy_close_requested.connect(self._handle_strategy_close)
-            self.grid_table.strategy_refresh_requested.connect(self._handle_strategy_refresh)
-            self.grid_table.dialog_requested.connect(lambda type, title, msg: self.show_dialog(type, title, msg))
-            
-            self.strategy_wrapper.strategy_added.connect(self._handle_strategy_added)
-            self.strategy_wrapper.strategy_updated.connect(self._handle_strategy_updated)
-            self.strategy_wrapper.strategy_error.connect(self._handle_strategy_error)
-            self.strategy_wrapper.strategy_started.connect(self._handle_strategy_started)
-            self.strategy_wrapper.strategy_stopped.connect(self._handle_strategy_stopped)
-            self.strategy_wrapper.strategy_deleted.connect(self._handle_strategy_deleted)
-
-            self.client_factory.client_status_changed.connect(self._handle_client_status_changed)
-            self.client_factory.client_created.connect(self._handle_client_created)
-            
-            strategy_uids = self.strategy_wrapper.get_all_strategy_uids()
-            for uid in strategy_uids:
-                grid_data = self.strategy_wrapper.get_strategy_data(uid)
-                if grid_data:
-                    print(f"[GridStrategyTab] 连接策略 {uid} 的数据更新信号")
-                    grid_data.data_updated.connect(self._handle_strategy_updated)
-                    
-            print(f"[GridStrategyTab] === 信号连接完成 ===")
-        except Exception as e:
-            print(f"[GridStrategyTab] 连接信号时发生错误: {e}")
-            print(f"[GridStrategyTab] 错误详情: {traceback.format_exc()}")
+    def _handle_check_status_feedback(self, status: str):
+        """处理 APIConfigManager 的状态检查反馈"""
+        print(f"[GridStrategyTab] 收到状态检查反馈: {status}")
+        if status == "connected":
+            self.show_message("连接状态", "交易所客户端已连接！")
+        elif status == "disconnected":
+            self.show_error_message("交易所客户端已断开连接！")
+        else:
+            self.show_message("连接状态", f"当前状态: {status}")
 
     @show_error_dialog
     def _handle_strategy_started(self, uid: str):
-        """处理策略启动事件"""
         print(f"[GridStrategyTab] 策略启动事件: {uid}")
         grid_data = self.strategy_wrapper.get_strategy_data(uid)
         if grid_data:
@@ -256,12 +352,6 @@ class GridStrategyTab(QWidget):
             grid_data = self.strategy_wrapper.get_strategy_data(uid)
             if grid_data:
                 self.show_message("添加成功", f"交易对 {pair_config.pair} 添加成功！")
-
-    @show_error_dialog
-    def _handle_client_status_changed(self, tab_id: str, status: str):
-        """处理客户端状态变化"""
-        if tab_id == self.tab_id:
-            self.api_manager.update_connection_status(status)
 
     @show_error_dialog
     def _handle_client_created(self, source_tab_id: str, exchange_type: str, client: BaseClient):
@@ -340,53 +430,6 @@ class GridStrategyTab(QWidget):
         self.api_manager.update_ws_status(is_public, connected)
 
     @show_error_dialog
-    def _auto_connect_exchange(self):
-        """仅在初次启动时尝试连接"""
-        try:
-            if self.exchange_client:
-                return
-
-            existing_client = self.client_factory.get_client(self.tab_id, self.inst_type)
-            if existing_client:
-                self.exchange_client = existing_client
-                self._connect_client_signals(existing_client)
-                return
-
-            config = self.api_manager.get_current_config()
-            if all([config.get('api_key'), config.get('api_secret'), config.get('passphrase')]):
-                self.exchange_client = self.client_factory.create_client(
-                    self.tab_id,
-                    self.api_manager.current_exchange.lower(),
-                    config,
-                    self.inst_type
-                )
-                print(f"[GridStrategyTab] 自动连接完成: {self.inst_type.value}")
-        except Exception as e:
-            print(f"[GridStrategyTab] 自动连接失败: {e}")
-
-    @show_error_dialog
-    def _handle_load_strategies(self, checked=False):
-        """处理加载策略配置"""
-        print(f"[GridStrategyTab] 加载策略配置触发")
-        existing_uids = set(self.grid_table.get_all_uids())  # 获取表格中已有 UID
-        if self.check_client_status():
-            self.strategy_wrapper.load_strategies(self.exchange_client, show_message=False)
-        else:
-            self.strategy_wrapper.load_strategies(show_message=False)
-        
-        # 检查并添加新策略
-        loaded_count = 0
-        for uid in self.strategy_wrapper.get_all_strategy_uids():
-            if uid not in existing_uids:
-                grid_data = self.strategy_wrapper.get_strategy_data(uid)
-                if grid_data:
-                    grid_data.data_updated.connect(self._handle_strategy_updated)
-                    self.grid_table.add_strategy_row(grid_data)
-                    loaded_count += 1
-        
-        self.show_message("加载策略配置", f"已加载 {loaded_count} 个新策略！")
-
-    @show_error_dialog
     def _handle_strategy_added(self, uid: str):
         existing_uids = set(self.grid_table.get_all_uids())
         if uid in existing_uids:
@@ -396,21 +439,35 @@ class GridStrategyTab(QWidget):
         grid_data = self.strategy_wrapper.get_strategy_data(uid)
         if grid_data:
             print(f"[GridStrategyTab] 添加策略 {uid} 到表格，grid_levels: {grid_data.grid_levels}")
+            try:
+                grid_data.data_updated.disconnect()  # 防止重复连接
+            except TypeError:
+                pass
             grid_data.data_updated.connect(self._handle_strategy_updated)
             self.grid_table.add_strategy_row(grid_data)
             self.strategy_wrapper.save_strategies(show_message=False)
+        else:
+            print(f"[GridStrategyTab] 未找到策略数据 UID={uid}，无法添加")
             
     @show_error_dialog
     def _handle_strategy_setting(self, uid: str):
+        print(f"[GridStrategyTab] 尝试打开设置对话框 for UID: {uid}")
         grid_data = self.strategy_wrapper.get_strategy_data(uid)
         if grid_data:
+            print(f"[GridStrategyTab] grid_data 存在，准备打开对话框")
             dialog = GridDialog(grid_data, self.strategy_wrapper)
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.strategy_wrapper.save_strategies(show_message=False)
+        else:
+            print(f"[GridStrategyTab] grid_data 为 None，无法打开对话框")
 
     @show_error_dialog
     def _handle_strategy_start(self, uid: str):
-        grid_data = self.strategy_wrapper.get_strategy_data(uid)  # 修改为 strategy_wrapper
+        if self.strategy_wrapper.is_strategy_running(uid):
+            self.show_error_message(f"策略 {uid} 已在运行中")
+            return
+            
+        grid_data = self.strategy_wrapper.get_strategy_data(uid)
         if not grid_data:
             self.show_error_message(f"策略 {uid} 数据不存在")
             return

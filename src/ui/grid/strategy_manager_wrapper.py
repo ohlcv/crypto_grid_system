@@ -159,6 +159,12 @@ class StrategyManagerWrapper(QObject):
                 self.strategy_error.emit(uid, error_msg)
                 return False
 
+            if self.strategy_manager.is_strategy_running(uid):
+                error_msg = "策略已在运行中"
+                print(f"[StrategyManagerWrapper] {error_msg}")
+                self.strategy_error.emit(uid, error_msg)
+                return False
+
             if not self._manage_subscription(grid_data.symbol_config.pair, uid, exchange_client, True):
                 error_msg = "行情订阅失败"
                 print(f"[StrategyManagerWrapper] {error_msg}")
@@ -166,7 +172,9 @@ class StrategyManagerWrapper(QObject):
                 return False
 
             if not self.strategy_manager.start_strategy(uid, exchange_client):
-                self._manage_subscription(grid_data.symbol_config.pair, uid, exchange_client, False)
+                error_msg = "策略启动失败"
+                print(f"[StrategyManagerWrapper] {error_msg}")
+                self.strategy_error.emit(uid, error_msg)
                 return False
 
             self.save_strategies(show_message=False)
@@ -320,8 +328,7 @@ class StrategyManagerWrapper(QObject):
                         print(f"[StrategyManagerWrapper] 保存时未找到策略数据: {uid}")
                         continue
                         
-                    # 在保存前将状态设置为"已保存"
-                    grid_data.status = "已保存"
+                    # grid_data.status = "已保存"
                     data['strategies'][uid] = grid_data.to_dict()
                     
                 create_file_if_not_exists(self.data_path)
@@ -372,46 +379,47 @@ class StrategyManagerWrapper(QObject):
                 loaded_count = 0
                 for uid, strategy_data in data['strategies'].items():
                     try:
-                        symbol_config = SymbolConfig(
-                            symbol=strategy_data["symbol_config"]["symbol"],
-                            pair=strategy_data["symbol_config"]["pair"],
-                            base_coin=strategy_data["symbol_config"]["base_coin"],
-                            quote_coin=strategy_data["symbol_config"]["quote_coin"],
-                            base_precision=strategy_data["symbol_config"]["base_precision"],
-                            quote_precision=strategy_data["symbol_config"]["quote_precision"],
-                            price_precision=strategy_data["symbol_config"]["price_precision"],
-                            min_base_amount=Decimal(strategy_data["symbol_config"]["min_base_amount"]),
-                            min_quote_amount=Decimal(strategy_data["symbol_config"]["min_quote_amount"])
-                        )
-                        
-                        grid_data = self.strategy_manager.create_strategy(
-                            uid, symbol_config, strategy_data["exchange"], self.inst_type
-                        )
-                        if not grid_data:
-                            print(f"[StrategyManagerWrapper] 创建策略 {uid} 失败")
-                            continue
-
+                        # 直接从 JSON 创建全新 GridData
                         grid_data = GridData.from_dict(strategy_data)
-                        # 设置加载状态为"已加载"
-                        grid_data.status = "已加载"
-                        self.strategy_manager._data[uid] = grid_data
-                        trader = self.strategy_manager._strategies.get(uid)
-                        if trader:
-                            trader.error_occurred.connect(self.strategy_manager._handle_strategy_error)
+                        print(f"[StrategyManagerWrapper] 从 JSON 创建策略 {uid}")
 
+                        # 清理现有 trader
+                        if uid in self.strategy_manager._strategies:
+                            trader = self.strategy_manager._strategies[uid]
+                            try:
+                                trader.error_occurred.disconnect()
+                                trader.save_requested.disconnect()
+                            except TypeError:
+                                pass
+                            trader.stop()  # 停止运行中的 trader
+                            del self.strategy_manager._strategies[uid]
+                            print(f"[StrategyManagerWrapper] 清理现有 trader for {uid}")
+
+                        # 创建新的 GridTrader
+                        from src.strategy.grid.grid_trader import GridTrader
+                        trader = GridTrader(self.strategy_manager, uid)
+                        trader.error_occurred.connect(self.strategy_manager._handle_strategy_error)
+                        trader.save_requested.connect(self.strategy_manager._handle_save_request)
+                        self.strategy_manager._strategies[uid] = trader
+                        print(f"[StrategyManagerWrapper] 创建新 trader for {uid}")
+
+                        # 覆盖现有数据
+                        self.strategy_manager._data[uid] = grid_data
                         self.strategy_added.emit(uid)
                         loaded_count += 1
 
                     except Exception as e:
                         print(f"[StrategyManagerWrapper] 加载策略 {uid} 失败: {e}")
+                        traceback.print_exc()
                         continue
 
                 if show_message and loaded_count > 0:
                     self.strategies_loaded.emit(f"成功加载 {loaded_count} 个策略！")
 
             except Exception as e:
-                error_msg = f"加载策略数据失败（未预期错误）: {str(e)}"
+                error_msg = f"加载策略数据失败: {str(e)}"
                 print(f"[StrategyManagerWrapper] {error_msg}")
+                traceback.print_exc()
                 if show_message:
                     self.load_error.emit(error_msg)
             finally:

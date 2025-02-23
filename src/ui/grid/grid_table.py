@@ -208,39 +208,7 @@ class GridTable(QTableWidget):
                 uids.append(uid_item.text())
         return uids
 
-    def add_strategy_row(self, grid_data: GridData):
-        """添加策略行，所有数据居中对齐"""
-        try:
-            print(f"[GridTable] 添加策略行: UID={grid_data.uid}, Pair={grid_data.symbol_config.pair}")
-            display_model = self.updater.register_strategy(grid_data.uid)
-            display_model.update(grid_data)
-            
-            row = self.rowCount()
-            self.insertRow(row)
-            print(f"[GridTable] 已插入新行: Row={row}")
-            
-            # 添加所有列的数据
-            visible_columns = GridColumnManager.get_visible_columns()
-            for col in visible_columns:
-                if col == GridColumn.OPERATIONS:
-                    self._create_operation_buttons(row, grid_data.uid, grid_data.operations)
-                else:
-                    value = display_model.get_value(col)
-                    display_value = "-" if value is None else str(value)
-                    item = QTableWidgetItem(display_value)
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)  # 居中对齐
-                    col_idx = GridColumnManager.get_column_index(col)
-                    self.setItem(row, col_idx, item)
-            
-            print(f"[GridTable] 策略行添加完成: UID={grid_data.uid}")
-            
-        except Exception as e:
-            print(f"[GridTable] 添加策略行失败: {e}")
-            print(f"[GridTable] 错误详情: {traceback.format_exc()}")
-            self.dialog_requested.emit("error", "错误", f"添加策略行失败: {str(e)}")
-
     def update_strategy_row(self, uid: str, grid_data: GridData):
-        """更新策略行，所有数据居中对齐"""
         try:
             uid_col = GridColumnManager.get_column_index(GridColumn.UID)
             row = -1
@@ -253,28 +221,116 @@ class GridTable(QTableWidget):
             if row == -1:
                 print(f"[GridTable] 未找到策略行: {uid}")
                 return
-                
+                    
             display_model = self.updater._display_models.get(uid)
             if display_model:
-                display_model.update(grid_data)
+                display_model.update(grid_data)  # 更新显示模型
                 visible_columns = GridColumnManager.get_visible_columns()
                 for col in visible_columns:
-                    if col != GridColumn.OPERATIONS:  # 操作按钮单独处理
+                    if col != GridColumn.OPERATIONS:
                         value = display_model.get_value(col)
                         display_value = "-" if value is None else str(value)
                         item = QTableWidgetItem(display_value)
-                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)  # 居中对齐
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                         col_idx = GridColumnManager.get_column_index(col)
                         self.setItem(row, col_idx, item)
-                
-                # 更新操作按钮状态
-                self._update_operation_buttons(row, uid, grid_data.operations)
-                
-            # print(f"[GridTable] 策略行更新完成: UID={uid}")
-            
+                    else:
+                        self._update_operation_buttons(row, uid, grid_data.operations)
+                print(f"[GridTable] 策略行更新完成: UID={uid}")
         except Exception as e:
             print(f"[GridTable] 更新策略行失败: {e}")
             print(f"[GridTable] 错误详情: {traceback.format_exc()}")
+
+    def show_context_menu(self, position):
+        index = self.indexAt(position)
+        if not index.isValid():
+            return
+
+        row = index.row()
+        uid_item = self.item(row, GridColumnManager.get_column_index(GridColumn.UID))
+        if not uid_item:
+            print(f"[GridTable] 未找到 UID 单元格: Row={row}")
+            return
+        uid = uid_item.text()
+        
+        # 从 strategy_wrapper 获取最新状态
+        is_running = self.strategy_wrapper.is_strategy_running(uid)
+        print(f"[GridTable] 检查策略状态: UID={uid}, Running={is_running}")
+        
+        menu = QMenu(self)
+        menu.addAction("设置网格", lambda: self.strategy_setting_requested.emit(uid))
+        
+        if is_running:
+            menu.addAction("停止策略", lambda: self.strategy_stop_requested.emit(uid))
+        else:
+            menu.addAction("启动策略", lambda: self.strategy_start_requested.emit(uid))
+
+        menu.addSeparator()
+        if not is_running:
+            menu.addAction("平仓", lambda: self._handle_close_strategy(uid))
+        
+        menu.addSeparator()
+        menu.addAction("刷新数据", lambda: self.strategy_refresh_requested.emit(uid))
+
+        menu.addSeparator()
+        menu.addAction("删除", lambda: self._handle_delete_strategy(uid, "运行中" if is_running else "已停止"))
+        
+        menu.exec(self.mapToGlobal(position))
+
+    def add_strategy_row(self, grid_data: GridData):
+        """添加策略行，所有数据居中对齐"""
+        try:
+            uid = grid_data.uid
+            print(f"[GridTable] 添加策略行: UID={uid}, Pair={grid_data.symbol_config.pair}")
+            display_model = self.updater.register_strategy(uid)
+            display_model.update(grid_data)
+            
+            # 检查是否已存在该 UID，若存在则更新
+            uid_col = GridColumnManager.get_column_index(GridColumn.UID)
+            row = -1
+            for i in range(self.rowCount()):
+                if self.item(i, uid_col) and self.item(i, uid_col).text() == uid:
+                    row = i
+                    break
+            
+            if row == -1:
+                row = self.rowCount()
+                self.insertRow(row)
+                print(f"[GridTable] 已插入新行: Row={row}")
+            else:
+                print(f"[GridTable] 更新现有行: Row={row}")
+            
+            # 添加所有列的数据
+            visible_columns = GridColumnManager.get_visible_columns()
+            for col in visible_columns:
+                if col == GridColumn.OPERATIONS:
+                    self._create_operation_buttons(row, uid, grid_data.operations)
+                else:
+                    value = display_model.get_value(col)
+                    display_value = "-" if value is None else str(value)
+                    item = QTableWidgetItem(display_value)
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    col_idx = GridColumnManager.get_column_index(col)
+                    self.setItem(row, col_idx, item)
+            
+            # 验证信号连接
+            print(f"[GridTable] 检查信号连接 for UID={uid}")
+            self.strategy_setting_requested.connect(self._test_signal)
+            self.strategy_start_requested.connect(self._test_signal)
+            self.strategy_stop_requested.connect(self._test_signal)
+            self.strategy_delete_requested.connect(self._test_signal)
+            self.strategy_close_requested.connect(self._test_signal)
+            self.strategy_refresh_requested.connect(self._test_signal)
+            
+            print(f"[GridTable] 策略行添加完成: UID={uid}")
+            
+        except Exception as e:
+            print(f"[GridTable] 添加策略行失败: {e}")
+            print(f"[GridTable] 错误详情: {traceback.format_exc()}")
+            self.dialog_requested.emit("error", "错误", f"添加策略行失败: {str(e)}")
+
+    def _test_signal(self, uid: str):
+        print(f"[GridTable] 信号触发测试: UID={uid}")
 
     def _handle_batch_update(self, uid: str, updates: Dict[GridColumn, Any]):
         """处理批量更新，所有数据居中对齐"""
@@ -375,43 +431,6 @@ class GridTable(QTableWidget):
         if grid_data:
             grid_data.operations[operation_type] = checked
             grid_data.data_updated.emit(uid)
-
-    def show_context_menu(self, position):
-        index = self.indexAt(position)
-        if not index.isValid():
-            return
-
-        row = index.row()
-        uid_item = self.item(row, GridColumnManager.get_column_index(GridColumn.UID))
-        if not uid_item:
-            print(f"[GridTable] 未找到 UID 单元格: Row={row}")
-            return
-        uid = uid_item.text()
-        
-        status = self.get_strategy_status(uid)
-        if not status:
-            print(f"[GridTable] 未找到状态: UID={uid}")
-            return
-            
-        menu = QMenu(self)
-        menu.addAction("设置网格", lambda: self.strategy_setting_requested.emit(uid))
-        
-        if status == "运行中":
-            menu.addAction("停止策略", lambda: self.strategy_stop_requested.emit(uid))
-        else:
-            menu.addAction("启动策略", lambda: self.strategy_start_requested.emit(uid))
-
-        menu.addSeparator()
-        if status != "运行中":
-            menu.addAction("平仓", lambda: self._handle_close_strategy(uid))
-        
-        menu.addSeparator()
-        menu.addAction("刷新数据", lambda: self.strategy_refresh_requested.emit(uid))
-
-        menu.addSeparator()
-        menu.addAction("删除", lambda: self._handle_delete_strategy(uid, status))
-        
-        menu.exec(self.mapToGlobal(position))
 
     def _handle_delete_strategy(self, uid: str, status: str):
         try:
