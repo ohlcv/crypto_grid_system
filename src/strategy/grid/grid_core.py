@@ -342,8 +342,8 @@ class GridData(QObject):
                 "ts": self.ticker_data.ts
             } if self.ticker_data else None,
             "total_realized_profit": str(self.total_realized_profit),
-            "status": self.status,
-            "operations": self.operations,
+            "status": self.status,  # 确保状态被正确保存
+            "operations": self.operations.copy(),  # 使用深拷贝
             "grid_levels": {
                 str(level): {
                     "interval_percent": str(config.interval_percent),

@@ -1,8 +1,8 @@
 {
     "inst_type": "spot",
     "strategies": {
-        "dbdde70a": {
-            "uid": "dbdde70a",
+        "b536bf19": {
+            "uid": "b536bf19",
             "symbol_config": {
                 "symbol": "TRUMPUSDT",
                 "pair": "TRUMP/USDT",
@@ -17,16 +17,45 @@
             "exchange": "bitget",
             "inst_type": "spot",
             "direction": "long",
-            "ticker_data": null,
+            "ticker_data": {
+                "instId": "TRUMPUSDT",
+                "lastPr": "16.139",
+                "ts": 1740319578930
+            },
             "total_realized_profit": "0",
-            "status": "已保存",
+            "status": "已停止",
             "operations": {
                 "开仓": true,
                 "平仓": true
             },
-            "grid_levels": {},
-            "open_trigger_price": null,
-            "tp_trigger_price": null,
+            "grid_levels": {
+                "0": {
+                    "interval_percent": "1.0",
+                    "open_rebound_percent": "0.1",
+                    "close_rebound_percent": "0.1",
+                    "take_profit_percent": "1.0",
+                    "invest_amount": "1.5",
+                    "filled_amount": null,
+                    "filled_price": null,
+                    "filled_time": null,
+                    "is_filled": false,
+                    "order_id": null
+                },
+                "1": {
+                    "interval_percent": "1.0",
+                    "open_rebound_percent": "0.1",
+                    "close_rebound_percent": "0.1",
+                    "take_profit_percent": "1.0",
+                    "invest_amount": "1.5",
+                    "filled_amount": null,
+                    "filled_price": null,
+                    "filled_time": null,
+                    "is_filled": false,
+                    "order_id": null
+                }
+            },
+            "open_trigger_price": "15.91227",
+            "tp_trigger_price": "16.23373",
             "take_profit_config": {
                 "enabled": false,
                 "profit_amount": null

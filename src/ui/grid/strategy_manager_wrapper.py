@@ -28,7 +28,7 @@ class CustomJSONEncoder(json.JSONEncoder):
     
 class StrategyManagerWrapper(QObject):
     """策略管理器包装类,处理策略的创建、管理和数据持久化"""
-    
+
     # 信号定义
     strategy_added = Signal(str)  # uid
     strategy_deleted = Signal(str)  # uid
@@ -36,6 +36,8 @@ class StrategyManagerWrapper(QObject):
     strategy_error = Signal(str, str)  # uid, error_msg
     strategy_started = Signal(str)  # uid
     strategy_stopped = Signal(str)  # uid
+    strategies_saved = Signal(str)  # message
+    strategies_loaded = Signal(str)  # message
     data_saved = Signal(str)  # message
     data_loaded = Signal(str)  # message
     save_error = Signal(str)  # error_message
@@ -64,18 +66,11 @@ class StrategyManagerWrapper(QObject):
 
     def _connect_manager_signals(self):
         """连接策略管理器的信号"""
-        self.strategy_manager.strategy_started.connect(
-            lambda uid: self.strategy_started.emit(uid)
-        )
-        self.strategy_manager.strategy_stopped.connect(
-            lambda uid: self.strategy_stopped.emit(uid)
-        )
-        self.strategy_manager.strategy_error.connect(
-            lambda uid, msg: self.strategy_error.emit(uid, msg)
-        )
-        self.strategy_manager.strategy_status_changed.connect(
-            lambda uid, status: self.strategy_updated.emit(uid)
-        )
+        self.strategy_manager.strategy_started.connect(lambda uid: self.strategy_started.emit(uid))
+        self.strategy_manager.strategy_stopped.connect(lambda uid: self.strategy_stopped.emit(uid))
+        self.strategy_manager.strategy_error.connect(lambda uid, msg: self.strategy_error.emit(uid, msg))
+        self.strategy_manager.strategy_status_changed.connect(lambda uid, status: self.strategy_updated.emit(uid))
+        self.strategy_manager.save_requested.connect(self.save_strategies)  # 连接新信号
 
     def _subscribe_pair(self, pair: str, uid: str, client: BaseClient) -> bool:
         """订阅交易对"""
@@ -103,37 +98,6 @@ class StrategyManagerWrapper(QObject):
             client.unsubscribe_pair(pair, ["ticker"], uid)
             del self._subscriptions[pair]
         print(f"[StrategyManagerWrapper] 当前订阅: {self._subscriptions}")
-
-    def create_strategy(self, symbol_config: SymbolConfig, exchange: str, is_long: bool = True) -> Optional[str]:
-        try:
-            uid = str(uuid.uuid4())[:8]
-            print(f"\n[StrategyManagerWrapper] === 创建策略 {uid} ===")
-            print(f"交易对: {symbol_config.pair}")
-            print(f"交易所: {exchange}")
-            print(f"方向: {'做多' if is_long else '做空'}")
-            
-            grid_data = self.strategy_manager.create_strategy(
-                uid,
-                symbol_config,
-                exchange,
-                self.inst_type,
-                is_long
-            )
-            
-            if not grid_data:
-                raise ValueError("[StrategyManagerWrapper] 创建策略失败：not grid_data 返回 None")
-            grid_data.operations = {"开仓": True, "平仓": True}
-            grid_data.status = "已添加"
-            
-            self.strategy_added.emit(uid)
-            self.save_strategies(show_message=False)
-            return uid
-        except Exception as e:
-            error_msg = f"创建策略失败: {str(e)}"
-            print(f"[StrategyManagerWrapper] {error_msg}")
-            print(f"[StrategyManagerWrapper] 错误详情: {traceback.format_exc()}")
-            self.strategy_error.emit("", error_msg)
-            return None
 
     def _manage_subscription(self, pair: str, uid: str, client: BaseClient, subscribe: bool = True) -> bool:
         try:
@@ -169,6 +133,37 @@ class StrategyManagerWrapper(QObject):
             print(f"[StrategyManagerWrapper] {error_msg}")
             print(f"[StrategyManagerWrapper] 错误详情: {traceback.format_exc()}")
             self.strategy_error.emit("", error_msg)
+
+    def create_strategy(self, symbol_config: SymbolConfig, exchange: str, is_long: bool = True) -> Optional[str]:
+        try:
+            uid = str(uuid.uuid4())[:8]
+            print(f"\n[StrategyManagerWrapper] === 创建策略 {uid} ===")
+            print(f"交易对: {symbol_config.pair}")
+            print(f"交易所: {exchange}")
+            print(f"方向: {'做多' if is_long else '做空'}")
+            
+            grid_data = self.strategy_manager.create_strategy(
+                uid,
+                symbol_config,
+                exchange,
+                self.inst_type,
+                is_long
+            )
+            
+            if not grid_data:
+                raise ValueError("[StrategyManagerWrapper] 创建策略失败：not grid_data 返回 None")
+            grid_data.operations = {"开仓": True, "平仓": True}
+            grid_data.status = "已添加"
+            
+            self.strategy_added.emit(uid)
+            self.save_strategies(show_message=False)
+            return uid
+        except Exception as e:
+            error_msg = f"创建策略失败: {str(e)}"
+            print(f"[StrategyManagerWrapper] {error_msg}")
+            print(f"[StrategyManagerWrapper] 错误详情: {traceback.format_exc()}")
+            self.strategy_error.emit("", error_msg)
+            return None
 
     def start_strategy(self, uid: str, exchange_client: BaseClient) -> bool:
         try:
@@ -292,7 +287,24 @@ class StrategyManagerWrapper(QObject):
             self.strategy_error.emit(uid, error_msg)
             return False, error_msg
 
+    def get_strategy_data(self, uid: str) -> Optional[GridData]:
+        """获取策略数据"""
+        return self.strategy_manager.get_strategy_data(uid)
+
+    def get_all_strategy_uids(self) -> List[str]:
+        """获取所有策略ID"""
+        return list(self.strategy_manager._data.keys())
+
+    def is_strategy_running(self, uid: str) -> bool:
+        """检查策略是否在运行"""
+        return self.strategy_manager.is_strategy_running(uid)
+
+    def has_running_strategies(self) -> bool:
+        """检查是否有运行中的策略"""
+        return self.strategy_manager.has_running_strategies()
+
     def save_strategies(self, show_message: bool = True):
+        """保存所有策略数据"""
         def _save():
             try:
                 data = {
@@ -304,12 +316,7 @@ class StrategyManagerWrapper(QObject):
                 for uid in list(self.strategy_manager._data.keys()):
                     grid_data = self.strategy_manager.get_strategy_data(uid)
                     if grid_data:
-                        # 修改这里
-                        original_status = grid_data.status  # 使用属性
-                        grid_data.status = "已保存"
                         data['strategies'][uid] = grid_data.to_dict()
-                        grid_data.status = original_status
-                        
                         if self.strategy_manager.is_strategy_running(uid):
                             data['running_strategies'].append(uid)
 
@@ -318,12 +325,12 @@ class StrategyManagerWrapper(QObject):
                     json.dump(data, f, indent=4, ensure_ascii=False, cls=CustomJSONEncoder)
                 
                 if show_message:
-                    self.data_saved.emit("数据已成功保存！")
+                    self.strategies_saved.emit("策略数据已成功保存！")
+                print(f"[StrategyManagerWrapper] 策略数据已保存到 {self.data_path}")
 
             except Exception as e:
-                error_msg = f"保存数据失败: {str(e)}"
+                error_msg = f"保存策略数据失败: {str(e)}"
                 print(f"[StrategyManagerWrapper] {error_msg}")
-                print(f"[StrategyManagerWrapper] 错误详情: {traceback.format_exc()}")
                 if show_message:
                     self.save_error.emit(error_msg)
             finally:
@@ -340,32 +347,30 @@ class StrategyManagerWrapper(QObject):
         self._save_thread.start()
 
     def load_strategies(self, exchange_client: Optional[BaseClient] = None, show_message: bool = True):
+        """加载策略数据并恢复运行状态"""
         def _load():
             try:
                 if not os.path.exists(self.data_path):
                     if show_message:
-                        self.data_loaded.emit("无历史数据，已初始化空配置")
+                        self.strategies_loaded.emit("无历史策略数据，已初始化空配置")
                     return
 
                 with open(self.data_path, 'r', encoding='utf-8') as f:
-                    content = f.read().strip()
-                    print(f"[StrategyManagerWrapper] 加载文件内容:\n{content}")
-                    if not content:
-                        if show_message:
-                            self.data_loaded.emit("无历史数据，已初始化空配置")
-                        return
-                    data = json.loads(content)
+                    data = json.load(f)
 
                 if not isinstance(data, dict) or 'strategies' not in data:
-                    raise ValueError("无效的数据格式")
+                    raise ValueError("无效的策略数据格式")
 
                 loaded_count = 0
+                running_uids = set(data.get('running_strategies', []))
+                
+                # 先清除现有数据
+                self.strategy_manager.stop_all_strategies()
+                for uid in list(self.strategy_manager._data.keys()):
+                    self.strategy_manager.delete_strategy(uid)
+
                 for uid, strategy_data in data['strategies'].items():
                     try:
-                        print(f"\n[StrategyManagerWrapper] === 加载策略 {uid} ===")
-                        inst_type = InstType(strategy_data["inst_type"])
-                        
-                        # 从 strategy_data 创建 SymbolConfig
                         symbol_config = SymbolConfig(
                             symbol=strategy_data["symbol_config"]["symbol"],
                             pair=strategy_data["symbol_config"]["pair"],
@@ -382,33 +387,33 @@ class StrategyManagerWrapper(QObject):
                             uid,
                             symbol_config,
                             strategy_data["exchange"],
-                            inst_type
+                            self.inst_type
                         )
 
                         if grid_data:
-                            trader = self.strategy_manager._strategies[uid]
-                            trader.error_occurred.connect(self.strategy_manager._handle_strategy_error)
+                            grid_data = GridData.from_dict(strategy_data)
+                            self.strategy_manager._data[uid] = grid_data
+                            trader = self.strategy_manager._strategies.get(uid)
+                            if trader:
+                                trader.error_occurred.connect(self.strategy_manager._handle_strategy_error)
 
-                            grid_data.direction = PositionSide(strategy_data["direction"])
-                            grid_data.status = strategy_data.get("status", "已添加")
-                            grid_data.operations = strategy_data.get("operations", {"开仓": True, "平仓": True})
-                            grid_data.total_realized_profit = Decimal(str(strategy_data.get('total_realized_profit', '0')))
-                            # ... 其他恢复逻辑保持不变 ...
                             self.strategy_added.emit(uid)
                             loaded_count += 1
-                            
+
+                            # 恢复运行状态
+                            if uid in running_uids and exchange_client:
+                                self.start_strategy(uid, exchange_client)
+
                     except Exception as e:
                         print(f"[StrategyManagerWrapper] 加载策略 {uid} 失败: {e}")
-                        print(f"[StrategyManagerWrapper] 错误详情: {traceback.format_exc()}")
                         continue
 
                 if show_message and loaded_count > 0:
-                    self.data_loaded.emit(f"成功加载 {loaded_count} 个策略！")
+                    self.strategies_loaded.emit(f"成功加载 {loaded_count} 个策略！")
 
             except Exception as e:
-                error_msg = f"加载数据失败: {str(e)}"
+                error_msg = f"加载策略数据失败: {str(e)}"
                 print(f"[StrategyManagerWrapper] {error_msg}")
-                print(f"[StrategyManagerWrapper] 错误详情: {traceback.format_exc()}")
                 if show_message:
                     self.load_error.emit(error_msg)
             finally:
@@ -422,19 +427,3 @@ class StrategyManagerWrapper(QObject):
             daemon=True
         )
         self._load_thread.start()
-
-    def get_strategy_data(self, uid: str) -> Optional[GridData]:
-        """获取策略数据"""
-        return self.strategy_manager.get_strategy_data(uid)
-
-    def get_all_strategy_uids(self) -> List[str]:
-        """获取所有策略ID"""
-        return list(self.strategy_manager._data.keys())
-
-    def is_strategy_running(self, uid: str) -> bool:
-        """检查策略是否在运行"""
-        return self.strategy_manager.is_strategy_running(uid)
-
-    def has_running_strategies(self) -> bool:
-        """检查是否有运行中的策略"""
-        return self.strategy_manager.has_running_strategies()

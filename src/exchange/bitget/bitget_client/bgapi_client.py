@@ -11,6 +11,7 @@ from src.exchange.base_client import (
 )
 from src.exchange.bitget.consts import GET
 from src.exchange.bitget.exceptions import BitgetAPIException
+from src.utils.common.tools import adjust_decimal_places
 from src.utils.logger.log_helper import api_logger
 
 from src.exchange.bitget.v2.spot.account_api import AccountApi as SpotAccountApi
@@ -157,43 +158,49 @@ class BitgetAPIClient(BaseAPIClient):
             
         return symbols
 
-    def _parse_futures_symbols(self, response: Dict) -> List[SymbolConfig]:
-        """解析合约交易对信息"""
-        if response.get('code') != '00000':
-            raise BitgetAPIException(response.get('msg'), response.get('code'))
+    def _close_futures_positions(self, request: OrderRequest) -> OrderResponse:
+        try:
+            # 构建请求参数
+            params = {
+                'productType': 'USDT-FUTURES',
+                'symbol': request.pair.replace('/', '').upper(),
+            }
+            if request.position_side:
+                params['holdSide'] = request.position_side.value
+
+            # 发送平仓请求
+            order_api = self._get_api(InstType.FUTURES, 'order')
+            response = order_api.closePositions(params)
             
-        symbols = []
-        for item in response.get('data', []):
-            symbol = item['symbol']
-            base_coin = item['baseCoin']
-            quote_coin = item['quoteCoin']
+            if response.get('code') != '00000':
+                raise BitgetAPIException(response.get('msg'), response.get('code'))
             
-            config = SymbolConfig(
-                symbol=symbol,
-                pair=f"{base_coin}/{quote_coin}",
-                base_coin=base_coin,
-                quote_coin=quote_coin,
-                base_precision=int(item['volumePlace']),
-                quote_precision=2,  # 合约中未明确提供，USDT默认2位
-                price_precision=int(item['pricePlace']),
-                min_base_amount=Decimal(item['minTradeNum']),
-                min_quote_amount=Decimal(item['minTradeUSDT']),
-                max_leverage=int(item['maxLever']),
-                inst_type=InstType.FUTURES,
-                status=item['symbolStatus'],
-                extra_params={
-                    'size_multiplier': Decimal(item['sizeMultiplier']),
-                    'symbol_type': item['symbolType'],
-                    'support_margin_coins': item['supportMarginCoins'],
-                    'maker_fee_rate': Decimal(item['makerFeeRate']),
-                    'taker_fee_rate': Decimal(item['takerFeeRate']),
-                    'buy_limit_price_ratio': Decimal(item['buyLimitPriceRatio']),
-                    'sell_limit_price_ratio': Decimal(item['sellLimitPriceRatio'])
-                }
-            )
-            symbols.append(config)
+            # 获取订单ID并查询成交明细
+            order_id = response.get('data', {}).get('orderId')
+            time.sleep(0.5)  # 等待成交完成
+            fill_response = self.get_fills(request, order_id=order_id)
             
-        return symbols
+            if fill_response and len(fill_response) > 0:
+                return OrderResponse(
+                    status="success",
+                    success=True,
+                    order_id=order_id,
+                    data=fill_response[0],  # FillResponse
+                    code=response.get('code'),
+                    api_endpoint="/api/v2/mix/order/close-positions"
+                )
+            else:
+                return OrderResponse(
+                    status="success",
+                    success=True,
+                    order_id=order_id,
+                    data=None,  # 无成交明细
+                    code=response.get('code'),
+                    api_endpoint="/api/v2/mix/order/close-positions"
+                )
+        except Exception as e:
+            self.logger.error(f"合约一键平仓失败: {str(e)}")
+            raise
 
     def place_order(self, request: OrderRequest) -> OrderResponse:
         """统一下单接口"""
@@ -424,12 +431,6 @@ class BitgetAPIClient(BaseAPIClient):
         )
 
     def get_spot_assets(self, coin: str = None, asset_type: str = 'hold_only') -> List[AssetBalance]:
-        """获取现货资产余额
-        
-        Args:
-            coin: 币种名称,如'BTC'
-            asset_type: 资产类型 ('all'/'hold_only')
-        """
         try:
             params = {'assetType': asset_type}
             if coin:
@@ -443,15 +444,23 @@ class BitgetAPIClient(BaseAPIClient):
 
             asset_list = []
             for item in response.get('data', []):
-                asset = AssetBalance(
-                    coin=item.get('coin', '').upper(),
-                    available=Decimal(item.get('available', '0')),
-                    frozen=Decimal(item.get('frozen', '0')),
-                    locked=Decimal(item.get('locked', '0')),
-                    limit_available=Decimal(item.get('limitAvailable', '0')),
-                    update_time=int(item.get('uTime', 0))
-                )
-                asset_list.append(asset)
+                try:
+                    # 确保所有字段都有默认值
+                    utime = item.get('uTime')
+                    update_time = int(utime) if utime is not None else int(time.time() * 1000)
+                    
+                    asset = AssetBalance(
+                        coin=item.get('coin', '').upper(),
+                        available=Decimal(str(item.get('available', '0'))),
+                        frozen=Decimal(str(item.get('frozen', '0'))),
+                        locked=Decimal(str(item.get('locked', '0'))),
+                        limit_available=Decimal(str(item.get('limitAvailable', '0'))),
+                        update_time=update_time
+                    )
+                    asset_list.append(asset)
+                except (TypeError, ValueError) as e:
+                    self.logger.error(f"解析资产数据失败: {str(e)}, 数据: {item}")
+                    continue
 
             return asset_list
 
@@ -486,20 +495,18 @@ class BitgetAPIClient(BaseAPIClient):
             )
 
     def _close_spot_positions(self, request: OrderRequest) -> OrderResponse:
-        """现货一键平仓实现"""
         try:
             # 获取指定币种的持仓
             base_coin = request.pair.split('/')[0]
             assets = self.get_spot_assets(coin=base_coin, asset_type='hold_only')
             
-            if not assets:
+            if not assets or not assets[0].available:
                 return OrderResponse(
                     status="success",
                     success=True,
                     error_message="无可平仓数量"
                 )
                 
-            # 应该只有一个资产记录
             asset = assets[0]
             if asset.available <= 0:
                 return OrderResponse(
@@ -508,43 +515,39 @@ class BitgetAPIClient(BaseAPIClient):
                     error_message="无可平仓数量"
                 )
                     
-            # 构建市价卖出请求
+            # 使用传入的 base_size
             sell_request = OrderRequest(
                 inst_type=InstType.SPOT,
-                symbol=request.pair.replace('/', '').upper(),  # 使用完整交易对
+                symbol=request.symbol.replace('/', '').upper(),
                 side=OrderSide.SELL,
                 order_type=OrderType.MARKET,
-                base_size=asset.available,
+                base_size=request.base_size,
                 client_order_id=request.client_order_id
             )
             
-            # 发送市价卖出订单
             response = self.place_order(sell_request)
             
-            # 处理下单结果
             if response.success:
-                success_data = {
-                    'orderId': response.order_id,
-                    'clientOid': response.client_order_id,
-                    'symbol': request.pair
-                }
+                # 直接使用 place_order 返回的 FillResponse 对象
                 return OrderResponse(
                     status="success",
                     success=True,
-                    data={'successList': [success_data], 'failureList': []}
+                    order_id=response.order_id,
+                    client_order_id=response.client_order_id,
+                    create_time=response.create_time,
+                    data=response.data,  # FillResponse 对象
+                    code=response.code,
+                    api_endpoint="/api/v2/spot/trade/place-order"
                 )
             else:
-                failed_data = {
-                    'orderId': response.order_id,
-                    'clientOid': response.client_order_id,
-                    'symbol': request.pair,
-                    'errorMsg': response.error_message,
-                    'errorCode': response.code
-                }
                 return OrderResponse(
                     status="failed",
                     success=False,
-                    data={'successList': [], 'failureList': [failed_data]}
+                    error_message=response.error_message,
+                    code=response.code,
+                    order_id=response.order_id,
+                    client_order_id=response.client_order_id,
+                    data=None
                 )
                 
         except Exception as e:

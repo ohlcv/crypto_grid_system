@@ -2,7 +2,7 @@ import threading
 import time
 import traceback
 from typing import List, Optional, Dict
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from datetime import datetime
 from qtpy.QtCore import QObject, Signal
 
@@ -75,6 +75,7 @@ class GridTrader(QObject):
     
     status_changed = Signal(str, str)  # uid, status
     error_occurred = Signal(str, str)  # uid, error_message
+    save_requested = Signal(str)  # 新增信号，用于请求保存
 
     def __init__(self, grid_data: GridData):
         super().__init__()
@@ -185,6 +186,7 @@ class GridTrader(QObject):
             print(f"\n[GridTrader] === 检查并缓存交易对参数 === {self.grid_data.uid}")
             print(f"交易对: {self.grid_data.symbol_config.pair}")
 
+            # 检查是否已有缓存参数
             if (self.grid_data.symbol_config.base_precision is not None and
                 self.grid_data.symbol_config.price_precision is not None and
                 self.grid_data.symbol_config.min_base_amount is not None and
@@ -203,11 +205,14 @@ class GridTrader(QObject):
             if not symbol_configs:
                 error_msg = f"获取交易对 {symbol_normalized} 信息失败"
                 print(f"[GridTrader] {error_msg}")
+                self.error_occurred.emit(self.grid_data.uid, error_msg)
                 return False
 
             pair_config = next((config for config in symbol_configs if config.symbol == symbol_normalized), None)
             if not pair_config:
-                print(f"[GridTrader] 未找到交易对 {symbol_normalized} 的配置")
+                error_msg = f"未找到交易对 {symbol_normalized} 的配置"
+                print(f"[GridTrader] {error_msg}")
+                self.error_occurred.emit(self.grid_data.uid, error_msg)
                 return False
 
             self.grid_data.symbol_config = pair_config
@@ -219,8 +224,10 @@ class GridTrader(QObject):
             return True
 
         except Exception as e:
-            print(f"[GridTrader] 缓存交易参数失败: {e}")
+            error_msg = f"缓存交易参数失败: {str(e)}"
+            print(f"[GridTrader] {error_msg}")
             print(f"[GridTrader] 错误详情: {traceback.format_exc()}")
+            self.error_occurred.emit(self.grid_data.uid, error_msg)
             return False
 
     def _run_strategy(self):
@@ -521,11 +528,84 @@ class GridTrader(QObject):
         return False
 
     @error_handler()
+    def _on_order_update(self, order_id: str, order_data: dict):
+        if order_id != self._order_state.pending_order_id:
+            return
+        try:
+            if order_data.get("status") == "filled":
+                level = self._order_state.current_level
+                # 根据 client_order_id 判断订单类型
+                client_order_id = order_data.get('clientOid', '')
+                if '_tp' in client_order_id:
+                    trade_side = TradeSide.CLOSE
+                else:
+                    trade_side = TradeSide.OPEN
+
+                # 检查必需字段
+                required_fields = ['cTime', 'priceAvg', 'size', 'amount']
+                if all(field in order_data for field in required_fields):
+                    fill_response = FillResponse(
+                        symbol=self.grid_data.symbol_config.symbol,
+                        trade_time=int(order_data.get('cTime', time.time() * 1000)),
+                        position_side=self.grid_data.direction,
+                        trade_side=trade_side,
+                        filled_price=Decimal(order_data.get('priceAvg', '0')),
+                        filled_base_amount=Decimal(order_data.get('size', '0')),
+                        filled_quote_value=Decimal(order_data.get('amount', '0')),
+                        trade_id=order_data.get('tradeId'),
+                        order_id=order_id,
+                        client_order_id=client_order_id,
+                        fee=Decimal(order_data.get('fee', '0')) if order_data.get('fee') else None,
+                        fee_currency=order_data.get('feeCoin'),
+                        trade_scope=order_data.get('tradeScope')
+                    )
+                    self.grid_data.update_order_fill(level, fill_response, trade_side)
+                    self._order_state.clear_pending_order()
+                    print(f"[GridTrader] Order filled: {order_id} for level {level} as {trade_side.name}")
+                    # 发出数据更新信号
+                    self.grid_data.data_updated.emit(self.grid_data.uid)
+                    self.save_requested.emit(self.grid_data.uid)
+                else:
+                    error_msg = f"订单更新数据不完整: {order_data}"
+                    self.logger.error(error_msg)
+                    self.error_occurred.emit(self.grid_data.uid, error_msg)
+        except Exception as e:
+            error_msg = f"订单更新处理失败: {str(e)}"
+            self.error_occurred.emit(self.grid_data.uid, error_msg)
+
+    def _adjust_order_size(self, value: Decimal, precision: int, min_amount: Decimal, param_name: str) -> Decimal:
+        """调整数量精度并检查最小值"""
+        adjusted = adjust_decimal_places(value, precision)
+        if adjusted < min_amount:
+            raise ValueError(f"{param_name} {adjusted} 小于最小要求 {min_amount}")
+        return adjusted
+
+    @error_handler()
     def _place_order(self, level: int) -> None:
         try:
             self.logger.info(f"{self.grid_data.inst_type} {self.grid_data.uid} {self.grid_data.symbol_config.pair} 准备开仓-{level}")
             level_config = self.grid_data.grid_levels[level]
             is_long = self.grid_data.is_long()
+
+            # 获取精度参数
+            base_precision = self.grid_data.symbol_config.base_precision
+            quote_precision = self.grid_data.symbol_config.quote_precision
+            price_precision = self.grid_data.symbol_config.price_precision
+            min_quote_amount = self.grid_data.symbol_config.min_quote_amount
+
+            # 调整 quote_size 精度并检查最小值
+            quote_size = self._adjust_order_size(Decimal(str(level_config.invest_amount)), quote_precision, min_quote_amount, "投资金额")
+
+            # 对于市价单，计算 base_size（仅用于日志）
+            current_price = self.grid_data.ticker_data.lastPr if self.grid_data.ticker_data else None
+            if current_price:
+                base_size = adjust_decimal_places(quote_size / current_price, base_precision)
+                print(f"[GridTrader] 计算基础数量: {base_size} (仅参考)")
+            else:
+                print("[GridTrader] 当前价格不可用，无法计算基础数量")
+
+            # 调整价格精度（如果使用限价单）
+            price = adjust_decimal_places(current_price, price_precision) if current_price else None
 
             request = OrderRequest(
                 inst_type=self.grid_data.inst_type,
@@ -535,29 +615,32 @@ class GridTrader(QObject):
                 side=OrderSide.BUY if is_long else OrderSide.SELL,
                 trade_side=TradeSide.OPEN,
                 order_type=OrderType.MARKET,
-                quote_size=Decimal(str(level_config.invest_amount)),
-                price=self.grid_data.ticker_data.lastPr if self.grid_data.ticker_data else None,
+                quote_size=quote_size,
+                price=price,
                 client_order_id=f"grid_{self.grid_data.uid}_{level}_{int(time.time()*1000)}"
             )
 
             response = self.client.rest_api.place_order(request)
-            
+
             if response.success:
                 self._order_state.set_pending_order(response.order_id, level)
                 print(f"[GridTrader] 开仓订单已提交: {response.order_id}")
                 print(f"[GridTrader] 调用函数: {response.function_name}")
-                if response.data:
+                if isinstance(response.data, FillResponse):
                     print(f"[GridTrader] 成交数量: {response.data.filled_base_amount}")
                     print(f"[GridTrader] 成交价格: {response.data.filled_price}")
                     print(f"[GridTrader] 成交金额: {response.data.filled_quote_value}")
                     print(f"[GridTrader] 手续费: {response.data.fee}")
                     print(f"[GridTrader] 手续费币种: {response.data.fee_currency}")
-                    # 直接传递 FillResponse 对象给 update_order_fill
                     self.grid_data.update_order_fill(level, response.data, TradeSide.OPEN)
+                else:
+                    print(f"[GridTrader] 无成交数据: {response.data}")
             else:
                 error_msg = f"下单失败: {response.error_message}"
                 self.handle_error(error_msg)
 
+        except ValueError as ve:
+            self.handle_error(str(ve))
         except Exception as e:
             error_msg = f"下单错误: {str(e)}"
             self.trade_logger.error(f"下单错误 - {self.grid_data.uid}", exc_info=e)
@@ -569,6 +652,18 @@ class GridTrader(QObject):
             level_config = self.grid_data.grid_levels[level]
             is_long = self.grid_data.is_long()
             
+            # 获取精度参数
+            base_precision = self.grid_data.symbol_config.base_precision
+            price_precision = self.grid_data.symbol_config.price_precision
+            min_base_amount = self.grid_data.symbol_config.min_base_amount
+
+            # 调整 base_size 精度并检查最小值
+            base_size = self._adjust_order_size(level_config.filled_amount, base_precision, min_base_amount, "持仓数量")
+
+            # 调整价格精度
+            current_price = self.grid_data.ticker_data.lastPr if self.grid_data.ticker_data else None
+            price = adjust_decimal_places(current_price, price_precision) if current_price else None
+
             request = OrderRequest(
                 inst_type=self.grid_data.inst_type,
                 pair=self.grid_data.symbol_config.pair,
@@ -577,8 +672,8 @@ class GridTrader(QObject):
                 side=OrderSide.SELL if is_long else OrderSide.BUY,
                 trade_side=TradeSide.CLOSE,
                 order_type=OrderType.MARKET,
-                base_size=level_config.filled_amount,
-                price=self.grid_data.ticker_data.lastPr if self.grid_data.ticker_data else None,
+                base_size=base_size,
+                price=price,
                 client_order_id=f"grid_{self.grid_data.uid}_{level}_{int(time.time()*1000)}_tp"
             )
 
@@ -588,18 +683,23 @@ class GridTrader(QObject):
                 self._order_state.set_pending_order(response.order_id, level)
                 print(f"[GridTrader] 止盈订单已提交: {response.order_id}")
                 print(f"[GridTrader] 调用函数: {response.function_name}")
-                if response.data:
+                if isinstance(response.data, FillResponse):
                     print(f"[GridTrader] 成交数量: {response.data.filled_base_amount}")
                     print(f"[GridTrader] 成交价格: {response.data.filled_price}")
                     print(f"[GridTrader] 成交金额: {response.data.filled_quote_value}")
                     print(f"[GridTrader] 手续费: {response.data.fee}")
                     print(f"[GridTrader] 手续费币种: {response.data.fee_currency}")
-                    # 更新止盈成交信息
                     self.grid_data.update_order_fill(level, response.data, TradeSide.CLOSE)
+                    self.grid_data.data_updated.emit(self.grid_data.uid)
+                    self.save_requested.emit(self.grid_data.uid)
+                else:
+                    print(f"[GridTrader] 无成交数据: {response.data}")
             else:
                 error_msg = f"止盈下单失败: {response.error_message}"
                 self.error_occurred.emit(self.grid_data.uid, error_msg)
 
+        except ValueError as ve:
+            self.handle_error(str(ve))
         except Exception as e:
             error_msg = f"止盈下单错误: {str(e)}"
             self.logger.error(f"[GridTrader] {error_msg}")
@@ -607,47 +707,38 @@ class GridTrader(QObject):
             self.handle_error(error_msg)
 
     @error_handler()
-    def _on_order_update(self, order_id: str, order_data: dict):
-        if order_id != self._order_state.pending_order_id:
-            return
-        try:
-            if order_data["status"] == "filled":
-                level = self._order_state.current_level
-                # 构造 FillResponse 对象
-                fill_response = FillResponse(
-                    symbol=self.grid_data.symbol_config.symbol,
-                    trade_time=int(order_data.get('cTime', time.time() * 1000)),
-                    position_side=self.grid_data.direction,
-                    trade_side=TradeSide.OPEN,  # 默认假设为开仓，后续可根据逻辑调整
-                    filled_price=Decimal(order_data.get('priceAvg', '0')),  # 需要从 order_data 中获取
-                    filled_base_amount=Decimal(order_data.get('size', '0')),  # 需要从 order_data 中获取
-                    filled_quote_value=Decimal(order_data.get('amount', '0')),  # 需要从 order_data 中获取
-                    trade_id=order_data.get('tradeId'),
-                    order_id=order_id,
-                    client_order_id=order_data.get('clientOid'),
-                    fee=Decimal(order_data.get('fee', '0')) if order_data.get('fee') else None,
-                    fee_currency=order_data.get('feeCoin'),
-                    trade_scope=order_data.get('tradeScope')
-                )
-                self.grid_data.update_order_fill(level, fill_response, TradeSide.OPEN)
-                self._order_state.clear_pending_order()
-                print(f"[GridTrader] Order filled: {order_id} for level {level}")
-                    
-        except Exception as e:
-            print(f"[GridTrader] Error processing order update: {e}")
-            self.error_occurred.emit(self.grid_data.uid, f"订单更新处理失败: {str(e)}")
-
-    @error_handler()
     def _close_all_positions(self, reason: str) -> tuple[bool, str]:
         try:
             self.logger.info(f"{self.grid_data.inst_type} {self.grid_data.uid} {self.grid_data.symbol_config.pair} 准备全平...")
             self.logger.info(f"  原因: {reason}")
             
+            # 获取所有已填满的层级
+            filled_levels = [level for level, config in self.grid_data.grid_levels.items() if config.is_filled]
+            if not filled_levels:
+                return True, "无可平仓数量"
+
+            # 计算总持仓数量
+            total_filled_amount = sum(config.filled_amount for config in self.grid_data.grid_levels.values() if config.is_filled)
+            if total_filled_amount <= 0:
+                return True, "无可平仓数量"
+
+            # 调整数量精度到交易对要求
+            base_precision = self.grid_data.symbol_config.base_precision
+            min_base_amount = self.grid_data.symbol_config.min_base_amount
+            adjusted_amount = self._adjust_order_size(total_filled_amount, base_precision, min_base_amount, "总持仓数量")
+            print(f"[GridTrader] 调整后的总持仓数量: {adjusted_amount} (精度: {base_precision})")
+
             request = OrderRequest(
                 inst_type=self.grid_data.inst_type,
                 pair=self.grid_data.symbol_config.pair,
                 symbol=self.grid_data.symbol_config.symbol,
-                position_side=PositionSide.LONG if self.grid_data.is_long() else PositionSide.SHORT
+                position_side=PositionSide.LONG if self.grid_data.is_long() else PositionSide.SHORT,
+                side=OrderSide.SELL if self.grid_data.is_long() else OrderSide.BUY,
+                trade_side=TradeSide.CLOSE,
+                order_type=OrderType.MARKET,
+                base_size=adjusted_amount,
+                price=self.grid_data.ticker_data.lastPr if self.grid_data.ticker_data else None,
+                client_order_id=f"grid_close_all_{self.grid_data.uid}_{int(time.time()*1000)}"
             )
             
             response = self.client.rest_api.closeAllPositionsMarket(request)
@@ -655,20 +746,34 @@ class GridTrader(QObject):
             if response.success:
                 print(f"[GridTrader] 全平订单提交成功: {response.order_id}")
                 print(f"[GridTrader] 调用函数: {response.function_name}")
-                if response.data:
+                if isinstance(response.data, FillResponse):
                     print(f"[GridTrader] 成交数量: {response.data.filled_base_amount}")
                     print(f"[GridTrader] 成交价格: {response.data.filled_price}")
-                self.grid_data.reset_to_initial()
+                    print(f"[GridTrader] 成交金额: {response.data.filled_quote_value}")
+                    print(f"[GridTrader] 手续费: {response.data.fee}")
+                    print(f"[GridTrader] 手续费币种: {response.data.fee_currency}")
+                    self.grid_data.total_realized_profit += response.data.profit or Decimal('0')
+                else:
+                    print(f"[GridTrader] 无成交数据: {response.data}")
+                # 重置所有已填满的层级
+                for level in filled_levels:
+                    self.grid_data.reset_level(level)
                 self.grid_data.status = f"已平仓({reason})"
                 self.grid_data.data_updated.emit(self.grid_data.uid)
+                self.save_requested.emit(self.grid_data.uid)
                 return True, "平仓成功"
             else:
-                error_msg = f"平仓失败: {response.error_message}"
+                error_msg = response.error_message or "未知错误"
                 self.error_occurred.emit(self.grid_data.uid, error_msg)
                 return False, error_msg
-                    
+
+        except ValueError as ve:
+            error_msg = str(ve)
+            self.error_occurred.emit(self.grid_data.uid, error_msg)
+            return False, error_msg
         except Exception as e:
             error_msg = f"平仓出错: {str(e)}"
             self.logger.error(f"[GridTrader] {error_msg}")
             self.logger.error(f"[GridTrader] 错误详情: {traceback.format_exc()}")
+            self.error_occurred.emit(self.grid_data.uid, error_msg)
             return False, error_msg

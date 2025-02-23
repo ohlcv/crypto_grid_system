@@ -13,15 +13,18 @@ from qtpy.QtWidgets import (
 from qtpy.QtCore import Qt, QTimer, Signal, QObject
 from src.exchange.base_client import InstType, BaseClient 
 from src.exchange.client_factory import ExchangeClientFactory
+from src.utils.common.common import create_file_if_not_exists  # 假设这是你的工具函数
+
 
 class APIConfigManager(QObject):
     """API配置管理器"""
     # 信号定义
-    config_saved = Signal(str)  # message
-    config_loaded = Signal(str)  # message 
-    config_error = Signal(str)  # error_message
-    config_updated = Signal(dict)  # 新的配置数据
-    exchange_changed = Signal(str)  # new_exchange
+    config_error = Signal(str)
+    config_updated = Signal(dict, object)  # 修改为支持 config 和 client
+    exchange_changed = Signal(str)
+    save_config_signal = Signal(str)  # 修改为 save_config_signal
+    load_config_signal = Signal(str)  # 修改为 load_config_signal
+    check_status_signal = Signal()
     
     def __init__(self, tab_id: str, inst_type: InstType, client_factory: ExchangeClientFactory):
         super().__init__()
@@ -49,32 +52,13 @@ class APIConfigManager(QObject):
         self.status_check_timer.timeout.connect(self._check_connection_status)
         self.status_check_timer.start(60000)  # 每60秒检查一次
 
-    def update_connection_status(self, status: str):
-        """更新连接状态"""
-        self.connection_status = status
-        self.connection_status_label.setText(f"连接状态：{status}")
-        
-        # 根据状态设置颜色
-        if status == "就绪":
-            self.connection_status_label.setStyleSheet("color: green")
-        elif status in ["连接中", "验证中"]:
-            self.connection_status_label.setStyleSheet("color: orange")
-        else:
-            self.connection_status_label.setStyleSheet("color: red")
-
     def setup_ui_components(self) -> QWidget:
-        """创建API配置UI组件"""
+        """创建API配置UI组件，只显示 api_key, api_secret 和 passphrase 的输入框"""
         self.container = QWidget()
         layout = QVBoxLayout(self.container)
         
         # === 用户输入区域 ===
         user_input_layout = QHBoxLayout()
-        
-        # User ID
-        user_input_layout.addWidget(QLabel("User ID:"))
-        self.user_id_input = QLineEdit()
-        self.user_id_input.setPlaceholderText("请输入 User ID")
-        user_input_layout.addWidget(self.user_id_input, stretch=2)
         
         # API Key
         user_input_layout.addWidget(QLabel("API Key:"))
@@ -137,9 +121,13 @@ class APIConfigManager(QObject):
         self.load_api_button.clicked.connect(self.load_config)
         operation_layout.addWidget(self.load_api_button)
         
-        # self.test_connection_button = QPushButton("测试连接") 
-        # self.test_connection_button.clicked.connect(self.test_connection)
-        # operation_layout.addWidget(self.test_connection_button)
+        self.reconnect_button = QPushButton("重新连接")
+        self.reconnect_button.clicked.connect(self._handle_reconnect)
+        operation_layout.addWidget(self.reconnect_button)
+        
+        self.check_status_button = QPushButton("检查状态")
+        self.check_status_button.clicked.connect(self._handle_check_status)
+        operation_layout.addWidget(self.check_status_button)
         
         # 连接状态标签
         self.connection_status_label = QLabel("连接状态：未连接")
@@ -158,6 +146,115 @@ class APIConfigManager(QObject):
         layout.addLayout(operation_layout)
         
         return self.container
+
+    def save_config(self):
+        """仅保存配置到文件"""
+        config = {
+            'current': self.exchange_combo.currentText().lower(),
+            self.exchange_combo.currentText().lower(): {
+                'user_id': '',  # 保持数据结构完整，但留空
+                'api_key': self.api_key_input.text(),
+                'api_secret': self.secret_key_input.text(),
+                'passphrase': self.passphrase_input.text()
+            }
+        }
+        # 合并现有配置，避免覆盖其他交易所的数据
+        if os.path.exists(self.config_path):
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                existing_config = json.load(f)
+            existing_config.update(config)
+            config = existing_config
+        
+        try:
+            create_file_if_not_exists(self.config_path)
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=4)
+            print(f"[APIConfigManager] 配置已保存到 {self.config_path}")
+            self.save_config_signal.emit("配置已保存")
+        except Exception as e:
+            self.config_error.emit(f"保存配置失败: {str(e)}")
+
+    def _load_config_to_ui(self):
+        """仅加载配置到输入框"""
+        try:
+            if not os.path.exists(self.config_path):
+                print(f"[APIConfigManager] 配置文件不存在: {self.config_path}")
+                return
+                
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                
+            current_exchange = config.get('current', 'bitget')
+            exchange_config = config.get(current_exchange, {})
+            
+            self.exchange_combo.setCurrentText(current_exchange.capitalize())
+            self.api_key_input.setText(exchange_config.get('api_key', ''))
+            self.secret_key_input.setText(exchange_config.get('api_secret', ''))
+            self.passphrase_input.setText(exchange_config.get('passphrase', ''))
+            print(f"[APIConfigManager] 配置已加载到输入框")
+            self.load_config_signal.emit("配置已加载")
+            
+        except Exception as e:
+            self.config_error.emit(f"加载配置失败: {str(e)}")
+
+    def _handle_reconnect(self):
+        """处理重新连接"""
+        if not self.client_factory:
+            self.config_error.emit("客户端工厂未初始化")
+            return
+            
+        config = self.get_current_config()
+        if not all([config.get('api_key'), config.get('api_secret'), config.get('passphrase')]):
+            self.config_error.emit("API配置不完整")
+            return
+            
+        # 销毁现有客户端
+        self.client_factory.destroy_client(self.tab_id, self.inst_type)
+        
+        # 创建并连接新客户端
+        client = self.client_factory.create_client(
+            self.tab_id,
+            self.current_exchange,
+            config,
+            self.inst_type
+        )
+        if client:
+            self.config_updated.emit(config, client)  # 保持两个参数
+            print(f"[APIConfigManager] 客户端重新连接触发")
+        else:
+            self.config_error.emit("重新连接失败，无法创建客户端")
+
+    def _handle_check_status(self):
+        """检查并更新连接状态"""
+        client = self.client_factory.get_client(self.tab_id, self.inst_type)
+        if not client:
+            self.update_connection_status("未连接")
+            self.update_ws_status(True, False)
+            self.update_ws_status(False, False)
+            return
+            
+        ws_status = client.get_ws_status()
+        self.update_ws_status(True, ws_status.get('public', False))
+        self.update_ws_status(False, ws_status.get('private', False))
+        self.update_connection_status("就绪" if client.is_connected else "未连接")
+        print(f"[APIConfigManager] 连接状态已检查更新: {ws_status}")
+
+    def load_config(self):
+        """加载配置但不自动连接"""
+        self._load_config_to_ui()
+
+    def update_connection_status(self, status: str):
+        """更新连接状态"""
+        self.connection_status = status
+        self.connection_status_label.setText(f"连接状态：{status}")
+        
+        # 根据状态设置颜色
+        if status == "就绪":
+            self.connection_status_label.setStyleSheet("color: green")
+        elif status in ["连接中", "验证中"]:
+            self.connection_status_label.setStyleSheet("color: orange")
+        else:
+            self.connection_status_label.setStyleSheet("color: red")
 
     def _handle_client_status(self, tab_id: str, status: str):
         """处理客户端状态变化"""
@@ -182,20 +279,23 @@ class APIConfigManager(QObject):
                 self.update_ws_status(False, ws_status.get('private', False))
 
     def _check_connection_status(self):
-        client = self.client_factory.get_client(self.tab_id)
-        if client:
-            ws_status = client.get_ws_status()
-            # print(f"[APIConfigManager] 检查WebSocket状态: {ws_status}")
-            self.update_ws_status(True, ws_status.get('public', False))
-            self.update_ws_status(False, ws_status.get('private', False))
-            if ws_status['public'] and ws_status['private']:
-                self.update_connection_status("就绪")
-            elif not ws_status['public'] and not ws_status['private']:
-                self.update_connection_status("未连接")
-            else:
-                self.update_connection_status("部分连接")
+        """定期检查连接状态"""
+        client = self.client_factory.get_client(self.tab_id, self.inst_type)  # 修正参数
+        if not client:
+            self.update_connection_status("未连接")
+            return
+        ws_status = client.get_ws_status()
+        self.update_ws_status(True, ws_status.get('public', False))
+        self.update_ws_status(False, ws_status.get('private', False))
+        if ws_status['public'] and ws_status['private']:
+            self.update_connection_status("就绪")
+        elif not ws_status['public'] and not ws_status['private']:
+            self.update_connection_status("未连接")
+        else:
+            self.update_connection_status("部分连接")
 
     def _connect_client_signals(self, client: BaseClient):
+        """连接客户端信号"""
         try:
             print(f"[APIConfigManager] === 连接客户端信号 ===")
             print(f"  客户端类型: {client.inst_type.name}")
@@ -260,98 +360,6 @@ class APIConfigManager(QObject):
             }
         }
 
-    def load_config(self):
-            """加载API配置"""
-            try:
-                # 确保文件存在
-                os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-                if os.path.exists(self.config_path):
-                    with open(self.config_path, 'r', encoding='utf-8') as f:
-                        content = f.read().strip()
-                        # print(f"[APIConfigManager] 从文件加载的原始内容:\n{content}")
-                        if not content:  # 空文件
-                            self.config = self._create_default_config()
-                            # print(f"[APIConfigManager] 文件为空，使用默认配置: {json.dumps(self.config, indent=2)}")
-                        else:
-                            self.config = json.loads(content)
-                            # print(f"[APIConfigManager] 解析后的配置:\n{json.dumps(self.config, indent=2)}")
-                else:
-                    self.config = self._create_default_config()
-                    # print(f"[APIConfigManager] 配置文件不存在，使用默认配置: {json.dumps(self.config, indent=2)}")
-                
-                # 设置当前交易所
-                current_exchange = self.config.get('current', '').lower()
-                if not current_exchange:
-                    available_exchanges = self.client_factory.registry.get_available_exchanges(self.inst_type)
-                    current_exchange = available_exchanges[0] if available_exchanges else "bitget"
-                    self.config['current'] = current_exchange
-                    # print(f"[APIConfigManager] 未指定当前交易所，设置为: {current_exchange}")
-
-                # 获取当前交易所的API配置
-                exchange_config = self.config.get(current_exchange, {})
-                # print(f"[APIConfigManager] 当前交易所 {current_exchange} 的配置: {json.dumps(exchange_config, indent=2)}")
-                
-                # 更新UI
-                self.current_exchange = current_exchange.capitalize()
-                self.exchange_combo.blockSignals(True)
-                self.exchange_combo.setCurrentText(self.current_exchange)
-                self.exchange_combo.blockSignals(False)
-
-                self.user_id_input.setText(exchange_config.get('user_id', ''))
-                self.api_key_input.setText(exchange_config.get('api_key', ''))
-                self.secret_key_input.setText(exchange_config.get('api_secret', ''))
-                self.passphrase_input.setText(exchange_config.get('passphrase', ''))
-
-                # 如果有完整的API配置，发送更新信号
-                if all([
-                    exchange_config.get('api_key'),
-                    exchange_config.get('api_secret'),
-                    exchange_config.get('passphrase')
-                ]):
-                    # print(f"[APIConfigManager] API 配置完整，发送 config_updated 信号")
-                    self.config_updated.emit(exchange_config)
-
-            except Exception as e:
-                error_msg = f"加载配置失败: {str(e)}"
-                print(f"[APIConfigManager] {error_msg}")
-                print(f"[APIConfigManager] 错误详情: {traceback.format_exc()}")
-                self.config_error.emit(error_msg)
-
-    def save_config(self, auto_save: bool = False):
-        """保存API配置"""
-        current_exchange = self.exchange_combo.currentText().lower()
-        
-        # 获取当前输入的API信息
-        new_config = {
-            'user_id': self.user_id_input.text().strip(),
-            'api_key': self.api_key_input.text().strip(),
-            'api_secret': self.secret_key_input.text().strip(),
-            'passphrase': self.passphrase_input.text().strip()
-        }
-
-        # 更新配置
-        if not hasattr(self, 'config'):
-            self.config = self._create_default_config()
-        
-        self.config[current_exchange] = new_config
-        self.config['current'] = current_exchange
-
-        try:
-            # 保存配置
-            os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-            with open(self.config_path, 'w') as f:
-                json.dump(self.config, f, indent=4)
-
-            if not auto_save:
-                self.config_saved.emit("API配置已保存")
-                self.config_updated.emit(new_config)
-
-        except Exception as e:
-            error_msg = f"保存API配置失败: {str(e)}"
-            print(f"[APIConfigManager] {error_msg}")
-            print(f"[APIConfigManager] 错误详情: {traceback.format_exc()}")
-            self.config_error.emit(error_msg)
-
     def handle_exchange_changed(self, new_exchange: str):
         """处理交易所切换"""
         new_exchange = new_exchange.lower()
@@ -367,7 +375,6 @@ class APIConfigManager(QObject):
         exchange_config = self.config.get(new_exchange, {})
         
         # 更新UI显示
-        self.user_id_input.setText(exchange_config.get('user_id', ''))
         self.api_key_input.setText(exchange_config.get('api_key', ''))
         self.secret_key_input.setText(exchange_config.get('api_secret', ''))
         self.passphrase_input.setText(exchange_config.get('passphrase', ''))
@@ -380,7 +387,7 @@ class APIConfigManager(QObject):
         self.exchange_changed.emit(new_exchange)
         
         # 保存配置
-        self.save_config(auto_save=True)
+        self.save_config()
 
     def _toggle_api_visibility(self):
         """切换API信息显示状态"""
@@ -408,7 +415,7 @@ class APIConfigManager(QObject):
     def get_current_config(self) -> dict:
         """获取当前API配置"""
         return {
-            'user_id': self.user_id_input.text().strip(),
+            'user_id': '',  # 保持数据结构完整，但留空
             'api_key': self.api_key_input.text().strip(),
             'api_secret': self.secret_key_input.text().strip(),
             'passphrase': self.passphrase_input.text().strip(),

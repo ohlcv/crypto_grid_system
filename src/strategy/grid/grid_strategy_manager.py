@@ -12,6 +12,7 @@ from src.utils.common.tools import find_value
 from .grid_core import GridData
 from .grid_trader import GridTrader
 
+
 class GridStrategyManager(QObject):
     """网格策略管理器"""
     
@@ -20,6 +21,7 @@ class GridStrategyManager(QObject):
     strategy_stopped = Signal(str)  # uid
     strategy_error = Signal(str, str)  # uid, error_message
     strategy_status_changed = Signal(str, str)  # uid, status
+    save_requested = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -27,35 +29,44 @@ class GridStrategyManager(QObject):
         self._data: Dict[str, GridData] = {}  # uid -> GridData
         self._lock = threading.Lock()
 
-    def create_strategy(self, uid: str, symbol_config: SymbolConfig, exchange: str, inst_type: InstType, is_long: bool = True) -> Optional[GridData]:
-        print(f"\n[GridStrategyManager] {inst_type} === 创建新策略 === {uid}")
-        print(f"[GridStrategyManager] 交易对: {symbol_config.pair}")
-        
-        with self._lock:
-            if uid in self._data:
-                print(f"[GridStrategyManager] 策略 {uid} 已存在")
-                return None
+    def _handle_save_request(self, uid: str):
+        """处理保存请求"""
+        print(f"[GridStrategyManager] 收到保存请求: {uid}")
+        # 这里可以直接触发上层的保存逻辑
+        self.save_requested.emit(uid)
 
-        try:
-            print(f"[GridStrategyManager] 初始化策略数据...")
-            grid_data = GridData(uid, symbol_config, exchange, inst_type)
+    def create_strategy(self, uid: str, symbol_config: SymbolConfig, exchange: str, inst_type: InstType, is_long: bool = True) -> Optional[GridData]:
+            print(f"\n[GridStrategyManager] {inst_type} === 创建新策略 === {uid}")
+            print(f"[GridStrategyManager] 交易对: {symbol_config.pair}")
             
-            grid_data.set_direction(is_long=(inst_type == InstType.SPOT or is_long))
-            direction_str = PositionSide.LONG.name if grid_data.is_long() else PositionSide.SHORT.name
-            
-            print(f"[GridStrategyManager] 创建策略实例...")
-            self._data[uid] = grid_data
-            self._strategies[uid] = GridTrader(grid_data)
-            
-            print(f"[GridStrategyManager] 策略实例创建成功: {uid}")
-            return grid_data
-            
-        except Exception as e:
-            print(f"[GridStrategyManager] 创建策略失败: {e}")
-            print(f"[GridStrategyManager] 错误详情: {traceback.format_exc()}")
-            if uid in self._data:
-                del self._data[uid]
-            return None
+            with self._lock:
+                if uid in self._data:
+                    print(f"[GridStrategyManager] 策略 {uid} 已存在")
+                    return None
+
+            grid_data = None  # 初始化为 None，避免未定义变量
+            try:
+                print(f"[GridStrategyManager] 初始化策略数据...")
+                grid_data = GridData(uid, symbol_config, exchange, inst_type)
+                
+                print(f"[GridStrategyManager] 设置交易方向...")
+                grid_data.set_direction(is_long=(inst_type == InstType.SPOT or is_long))
+                
+                print(f"[GridStrategyManager] 创建策略实例...")
+                trader = GridTrader(grid_data)
+                trader.save_requested.connect(self._handle_save_request)  # 连接保存信号
+                self._data[uid] = grid_data
+                self._strategies[uid] = trader
+                
+                print(f"[GridStrategyManager] 策略实例创建成功: {uid}")
+                return grid_data
+                
+            except Exception as e:
+                print(f"[GridStrategyManager] 创建策略失败: {e}")
+                print(f"[GridStrategyManager] 错误详情: {traceback.format_exc()}")
+                if uid in self._data:
+                    del self._data[uid]
+                return None
         
     def stop_strategy(self, uid: str) -> bool:
         print(f"\n[GridStrategyManager] === 暂停策略运行 === {uid}")
@@ -184,7 +195,6 @@ class GridStrategyManager(QObject):
         except Exception as e:
             print(f"[GridStrategyManager] 启动策略失败: {e}")
             print(f"[GridStrategyManager] 错误详情: {traceback.format_exc()}")
-            self.strategy_error.emit(uid, str(e))
             return False
 
     def process_market_data(self, pair: str, data: dict):
@@ -333,8 +343,10 @@ class GridStrategyManager(QObject):
         return stats
 
     def _handle_status_changed(self, uid: str, status: str):
-        """处理策略状态变化"""
-        self.strategy_status_changed.emit(uid, status)
+        """处理非标准状态变化(启动/停止除外)"""
+        # 只处理特殊状态
+        if status not in ["运行中", "已停止"]:
+            self.strategy_status_changed.emit(uid, status)
 
     def _handle_error(self, uid: str, error_msg: str):
         """处理策略错误"""
@@ -362,8 +374,6 @@ class GridStrategyManager(QObject):
             print(f"[GridStrategyManager] 创建临时交易器执行平仓...")
             temp_trader = GridTrader(grid_data)
             temp_trader.set_client(exchange_client)
-            temp_trader.error_occurred.connect(self._handle_strategy_error)  # 连接错误信号
-            
             # 连接错误信号以便转发
             temp_trader.error_occurred.connect(self._handle_strategy_error)
             
@@ -384,6 +394,4 @@ class GridStrategyManager(QObject):
                 
         except Exception as e:
             error_msg = f"平仓失败: {str(e)}"
-            # print(f"[GridStrategyManager] {error_msg}")
-            # print(f"[GridStrategyManager] 错误详情: {traceback.format_exc()}")
             return False, error_msg
