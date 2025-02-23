@@ -49,7 +49,6 @@ class GridColumnConfig:
 class GridColumnManager:
     """列管理器"""
     COLUMN_CONFIGS = {
-        GridColumn.UID: GridColumnConfig("标识符", 100),
         GridColumn.PAIR: GridColumnConfig("交易对", 100),
         GridColumn.DIRECTION: GridColumnConfig("方向", 80),
         GridColumn.OPERATIONS: GridColumnConfig("操作", 100, editable=True),
@@ -58,18 +57,19 @@ class GridColumnManager:
         GridColumn.LAST_TIME: GridColumnConfig("最后时间", 100),
         GridColumn.LAST_PRICE: GridColumnConfig("最后价格", 100),
         GridColumn.AVG_PRICE: GridColumnConfig("持仓均价", 100),
-        GridColumn.OPEN_TRIGGER: GridColumnConfig("开仓触发价", 110),
-        GridColumn.TP_TRIGGER: GridColumnConfig("止盈触发价", 110),
-        GridColumn.ATP_TRIGGER: GridColumnConfig("均价止盈触发价", 100),
-        GridColumn.ASL_TRIGGER: GridColumnConfig("均价止损触发价", 100),
-        GridColumn.AVG_TP: GridColumnConfig("均价止盈", 100),
-        GridColumn.AVG_SL: GridColumnConfig("均价止损", 100),
-        GridColumn.TOTAL_TP: GridColumnConfig("总体止盈", 100),
-        GridColumn.TOTAL_SL: GridColumnConfig("总体止损", 100),
+        GridColumn.OPEN_TRIGGER: GridColumnConfig("开仓触发价", 115),
+        GridColumn.TP_TRIGGER: GridColumnConfig("止盈触发价", 115),
+        GridColumn.ATP_TRIGGER: GridColumnConfig("均价止盈触发价", 120),
+        GridColumn.ASL_TRIGGER: GridColumnConfig("均价止损触发价", 120),
+        GridColumn.AVG_TP: GridColumnConfig("均价止盈%", 100),
+        GridColumn.AVG_SL: GridColumnConfig("均价止损%", 100),
+        GridColumn.TOTAL_TP: GridColumnConfig("总止盈额", 100),
+        GridColumn.TOTAL_SL: GridColumnConfig("总止损额", 100),
         GridColumn.POS_VALUE: GridColumnConfig("持仓价值", 100),
         GridColumn.POS_PNL: GridColumnConfig("持仓盈亏", 100),
         GridColumn.REALIZED_PNL: GridColumnConfig("实现盈亏", 100),
         GridColumn.EXCHANGE: GridColumnConfig("交易所", 100),
+        GridColumn.UID: GridColumnConfig("标识符", 100),
     }
 
     @classmethod

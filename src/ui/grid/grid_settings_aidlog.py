@@ -15,6 +15,7 @@ from src.exchange.base_client import (
     InstType, OrderType, OrderSide, TradeSide, PositionSide
 )
 from src.strategy.grid.grid_core import GridData, LevelConfig
+from src.ui.grid.strategy_manager_wrapper import StrategyManagerWrapper
 from src.utils.logger.log_helper import ui_logger
 
 class GridSetting(QTableWidget):
@@ -187,10 +188,10 @@ class GridSetting(QTableWidget):
             self.setItem(row, col, item)
 
 class GridDialog(QDialog):
-    def __init__(self, grid_data: GridData):
+    def __init__(self, grid_data: GridData, strategy_wrapper: StrategyManagerWrapper):
         super().__init__()
         self.grid_data = grid_data
-        
+        self.strategy_wrapper = strategy_wrapper
         self.setWindowTitle(f"设置网格策略 - {self.grid_data.symbol_config.pair}")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMinimumWidth(1000)
@@ -564,8 +565,12 @@ class GridDialog(QDialog):
                     self.grid_data.update_level(next_level, level_config)
                     next_level += 1
 
-            # 更新接口数据
+            # 更新网格数据
             self.grid_data.data_updated.emit(self.grid_data.uid)
+            # 触发策略管理器的保存
+            # self.grid_data.data_updated.connect(
+            #     lambda uid: self.strategy_wrapper.save_strategies(show_message=False)
+            # )
             self.accept()
             
         except ValueError as e:

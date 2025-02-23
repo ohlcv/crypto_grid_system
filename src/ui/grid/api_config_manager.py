@@ -231,13 +231,27 @@ class APIConfigManager(QObject):
             self.update_connection_status("未连接")
             self.update_ws_status(True, False)
             self.update_ws_status(False, False)
+            status_msg = "客户端状态检查:\n客户端未连接"
+            QMessageBox.warning(None, "连接状态", status_msg)
             return
-            
+                
         ws_status = client.get_ws_status()
         self.update_ws_status(True, ws_status.get('public', False))
         self.update_ws_status(False, ws_status.get('private', False))
         self.update_connection_status("就绪" if client.is_connected else "未连接")
         print(f"[APIConfigManager] 连接状态已检查更新: {ws_status}")
+        
+        # 准备反馈消息
+        status_msg = "客户端状态检查:\n"
+        status_msg += f"客户端连接: {'已连接' if client.is_connected else '未连接'}\n"
+        status_msg += f"公共WebSocket: {'已连接' if ws_status.get('public') else '未连接'}\n"
+        status_msg += f"私有WebSocket: {'已连接' if ws_status.get('private') else '未连接'}"
+        
+        # 根据连接状态显示不同样式的弹窗
+        if client.is_connected and all(ws_status.values()):
+            QMessageBox.information(None, "连接状态", status_msg)
+        else:
+            QMessageBox.warning(None, "连接状态", status_msg)
 
     def load_config(self):
         """加载配置但不自动连接"""

@@ -228,13 +228,14 @@ class GridData(QObject):
         self.data_updated.emit(self.uid)
 
     def reset_to_initial(self):
-        """重置到初始状态"""
         with self._lock:
             self.grid_levels.clear()
             self.ticker_data = None
             self.total_realized_profit = Decimal('0')
             self.status = "已重置"
             self.operations = {"开仓": True, "平仓": True}
+            self.open_trigger_price = None
+            self.tp_trigger_price = None
             self.data_updated.emit(self.uid)
 
     def update_level(self, level: int, config: dict) -> None:
@@ -433,6 +434,7 @@ class GridData(QObject):
         return any(config.is_filled for config in self.grid_levels.values())
 
     def update_order_fill(self, level: int, fill_response: 'FillResponse', trade_type: TradeSide = TradeSide.OPEN) -> None:
+        print(f"[GridData] 更新订单成交: level={level}, trade_type={trade_type}, fill_response={fill_response}")
         try:
             level_config = self.grid_levels.get(level)
             if not level_config:

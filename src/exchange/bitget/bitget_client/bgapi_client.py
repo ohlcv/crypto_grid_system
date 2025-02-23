@@ -158,6 +158,44 @@ class BitgetAPIClient(BaseAPIClient):
             
         return symbols
 
+    def _parse_futures_symbols(self, response: Dict) -> List[SymbolConfig]:
+        """解析合约交易对信息"""
+        if response.get('code') != '00000':
+            raise BitgetAPIException(response.get('msg'), response.get('code'))
+            
+        symbols = []
+        for item in response.get('data', []):
+            symbol = item['symbol']
+            base_coin = item['baseCoin']
+            quote_coin = item['quoteCoin']
+            
+            config = SymbolConfig(
+                symbol=symbol,
+                pair=f"{base_coin}/{quote_coin}",
+                base_coin=base_coin,
+                quote_coin=quote_coin,
+                base_precision=int(item['volumePlace']),
+                quote_precision=2,  # 合约中未明确提供，USDT默认2位
+                price_precision=int(item['pricePlace']),
+                min_base_amount=Decimal(item['minTradeNum']),
+                min_quote_amount=Decimal(item['minTradeUSDT']),
+                max_leverage=int(item['maxLever']),
+                inst_type=InstType.FUTURES,
+                status=item['symbolStatus'],
+                extra_params={
+                    'size_multiplier': Decimal(item['sizeMultiplier']),
+                    'symbol_type': item['symbolType'],
+                    'support_margin_coins': item['supportMarginCoins'],
+                    'maker_fee_rate': Decimal(item['makerFeeRate']),
+                    'taker_fee_rate': Decimal(item['takerFeeRate']),
+                    'buy_limit_price_ratio': Decimal(item['buyLimitPriceRatio']),
+                    'sell_limit_price_ratio': Decimal(item['sellLimitPriceRatio'])
+                }
+            )
+            symbols.append(config)
+            
+        return symbols
+
     def _close_futures_positions(self, request: OrderRequest) -> OrderResponse:
         try:
             # 构建请求参数
@@ -329,7 +367,7 @@ class BitgetAPIClient(BaseAPIClient):
             inst_type = self._get_inst_type(request)
             order_api = self._get_api(inst_type, 'order')
 
-            # 构建请求参数 
+            # 构建请求参数
             params = {
                 'symbol': request.symbol.replace('/', '').upper() if request else None,
                 'orderId': kwargs.get('order_id'),
@@ -352,17 +390,26 @@ class BitgetAPIClient(BaseAPIClient):
             
             if response.get('code') != '00000':
                 raise BitgetAPIException(response.get('msg'), response.get('code'))
-                
-            # 解析成交记录
-            fills = []
-            for fill in response.get('data', []):
-                if inst_type == InstType.SPOT:
-                    fills.append(self._parse_spot_fill(fill))
-                else:
-                    fills.append(self._parse_contract_fill(fill))
                     
-            return fills
+            # 解析成交记录 - 处理不同的数据结构
+            fills = []
+            data = response.get('data', {})
             
+            # 处理合约的fillList结构或现货的直接数组结构
+            fill_list = data.get('fillList', []) if isinstance(data, dict) else data
+            
+            for fill in fill_list:
+                try:
+                    if inst_type == InstType.SPOT:
+                        fills.append(self._parse_spot_fill(fill))
+                    else:
+                        fills.append(self._parse_contract_fill(fill))
+                except Exception as e:
+                    self.logger.error(f"解析成交记录失败: {e}, 数据: {fill}")
+                    continue
+                        
+            return fills
+                
         except Exception as e:
             self.logger.error(f"查询成交记录失败: {str(e)}")
             raise
@@ -373,9 +420,14 @@ class BitgetAPIClient(BaseAPIClient):
         base_coin = symbol[:-4] if symbol.endswith('USDT') else symbol[:-3]
         quote_coin = symbol[-4:] if symbol.endswith('USDT') else symbol[-3:]
         
-        # 根据 side 推断 trade_side（可选）
+        # 根据 side 推断 trade_side
         side = fill.get('side')
         trade_side = TradeSide.OPEN if side == 'buy' else TradeSide.CLOSE if side == 'sell' else None
+        
+        # 从feeDetail中获取手续费信息
+        fee_detail = fill.get('feeDetail', {})
+        fee = Decimal(str(fee_detail.get('totalFee', '0')))
+        fee_currency = fee_detail.get('feeCoin')
         
         return FillResponse(
             trade_id=fill['tradeId'],
@@ -384,15 +436,15 @@ class BitgetAPIClient(BaseAPIClient):
             pair=f"{base_coin}/{quote_coin}",
             base_coin=base_coin,
             quote_coin=quote_coin,
-            trade_side=trade_side,  # 添加 trade_side 参数
+            trade_side=trade_side,
             position_side=PositionSide.LONG,  # 现货通常为做多
             trade_time=int(fill['cTime']),
             trade_scope=fill['tradeScope'],  # taker/maker
             filled_price=Decimal(fill['priceAvg']),
             filled_base_amount=Decimal(fill['size']),
             filled_quote_value=Decimal(fill['amount']),
-            fee=Decimal(fill['feeDetail']['totalFee']),
-            fee_currency=fill['feeDetail']['feeCoin'],
+            fee=fee,
+            fee_currency=fee_currency,
             source=fill.get('enterPointSource', 'API')
         )
         
@@ -402,19 +454,24 @@ class BitgetAPIClient(BaseAPIClient):
         base_coin = symbol[:-4] if symbol.endswith('USDT') else symbol[:-3]
         quote_coin = symbol[-4:] if symbol.endswith('USDT') else symbol[-3:]
         
-        # 解析持仓方向
+        # 处理手续费信息
+        fee_detail = fill.get('feeDetail', [{}])[0]
+        fee = Decimal(str(fee_detail.get('totalFee', '0')))
+        fee_currency = fee_detail.get('feeCoin')
+        
+        # 解析持仓方向和交易方向
         if fill['posMode'] == 'hedge_mode':  # 双向持仓
             position_side = (PositionSide.LONG if fill['side'] == 'buy' 
-                           else PositionSide.SHORT)
+                            else PositionSide.SHORT)
         else:  # 单向持仓
             position_side = PositionSide.LONG
-            
+                
         return FillResponse(
             trade_id=fill['tradeId'],
             order_id=fill['orderId'],
             symbol=symbol,
             pair=f"{base_coin}/{quote_coin}",
-            base_coin=base_coin,
+            base_coin=base_coin,  
             quote_coin=quote_coin,
             position_side=position_side,
             trade_side=TradeSide(fill['tradeSide']) if 'tradeSide' in fill else None,
@@ -423,10 +480,10 @@ class BitgetAPIClient(BaseAPIClient):
             filled_price=Decimal(fill['price']),
             filled_base_amount=Decimal(fill['baseVolume']),
             filled_quote_value=Decimal(fill['quoteVolume']),
-            fee=Decimal(fill['feeDetail'][0]['totalFee']),
-            fee_currency=fill['feeDetail'][0]['feeCoin'],
+            fee=fee,
+            fee_currency=fee_currency,
             profit=Decimal(fill['profit']) if 'profit' in fill else None,
-            position_mode=fill['posMode'],  
+            position_mode=fill['posMode'],
             source=fill.get('enterPointSource', 'API')
         )
 

@@ -37,6 +37,7 @@ class GridStrategyTab(QWidget):
 
     def __init__(self, inst_type: InstType, client_factory: ExchangeClientFactory):
         super().__init__()
+        self.is_closing = False  # 添加关闭标志
         self.inst_type = inst_type
         self.client_factory = client_factory
         self.tab_id = str(uuid.uuid4())
@@ -92,40 +93,56 @@ class GridStrategyTab(QWidget):
         self.show_message("数据已刷新", info_text)
 
     def _handle_strategy_close(self, uid: str):
-        if not self.check_client_status():
-            return
+        """处理策略平仓请求"""
+        try:
+            if not self.check_client_status():
+                return
+                
+            grid_data = self.strategy_wrapper.get_strategy_data(uid)
+            if not grid_data:
+                return
+                
+            grid_status = grid_data.get_grid_status()
+            confirm_msg = (
+                f"确认平仓 {grid_data.symbol_config.pair} ?\n"
+                f"方向: {'多仓' if grid_data.is_long() else '空仓'}\n"
+                f"当前层数: {grid_status['filled_levels']}/{grid_status['total_levels']}"
+            )
             
-        grid_data = self.strategy_wrapper.get_strategy_data(uid)
-        if not grid_data:
-            return
+            reply = QMessageBox.question(
+                self,
+                "平仓确认",
+                confirm_msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
             
-        grid_status = grid_data.get_grid_status()
-        confirm_msg = (
-            f"确认平仓 {grid_data.symbol_config.pair} ?\n"
-            f"方向: {'多仓' if grid_data.is_long() else '空仓'}\n"
-            f"当前层数: {grid_status['filled_levels']}/{grid_status['total_levels']}"
-        )
+            if reply == QMessageBox.StandardButton.Yes:
+                try:
+                    success, message = self.strategy_wrapper.close_position(uid, self.exchange_client)
+                    if success:
+                        if message == "无可平仓数量":
+                            self.show_message("无需平仓", "当前币种无持仓，无需平仓！")
+                        elif message == "平仓成功":
+                            self.show_message("平仓成功", "该币持仓已全平！")
+                        else:
+                            self.show_message("操作完成", message)
+                        self.strategy_wrapper.save_strategies(show_message=False)
+                except Exception as e:
+                    self._handle_strategy_error(uid, f"平仓操作失败: {str(e)}")
+
+        except Exception as e:
+            self._handle_strategy_error(uid, f"平仓处理异常: {str(e)}")
+            
+    def _handle_strategy_error(self, uid: str, error_msg: str):
+        """处理策略错误事件"""
+        print(f"[GridStrategyTab] 处理策略错误 - UID: {uid}, 错误: {error_msg}")
+        if uid:
+            grid_data = self.strategy_wrapper.get_strategy_data(uid)
+            if grid_data:
+                grid_data.status = "错误停止"
+                self.grid_table.update_strategy_row(uid, grid_data)
         
-        reply = QMessageBox.question(
-            self,
-            "平仓确认",
-            confirm_msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            success, message = self.strategy_wrapper.close_position(uid, self.exchange_client)
-            if success:
-                if message == "无可平仓数量":
-                    self.show_message("无需平仓", "当前币种无持仓，无需平仓！")
-                elif message == "平仓成功":
-                    self.show_message("平仓成功", "该币持仓已全平！")
-                else:
-                    self.show_message("操作完成", message)
-            else:
-                self._handle_strategy_error(uid, message)
-        if success:
-            self.strategy_wrapper.save_strategies(show_message=False)
+        self.show_dialog("error", "错误", error_msg)
 
     def _connect_signals(self):
         try:
@@ -193,7 +210,9 @@ class GridStrategyTab(QWidget):
         if grid_data:
             grid_data.status = "已停止"
             self.grid_table.update_strategy_row(uid, grid_data)
-            self.show_message("策略停止", f"策略 {uid} 已停止！")
+            # 仅在非关闭流程中显示弹窗
+            if not self.is_closing:
+                self.show_message("策略停止", f"策略 {uid} 已停止！")
         else:
             self.show_error_message(f"策略 {uid} 数据未找到")
 
@@ -369,7 +388,6 @@ class GridStrategyTab(QWidget):
 
     @show_error_dialog
     def _handle_strategy_added(self, uid: str):
-        """处理策略添加事件"""
         existing_uids = set(self.grid_table.get_all_uids())
         if uid in existing_uids:
             print(f"[GridStrategyTab] 策略 {uid} 已存在，跳过添加")
@@ -377,24 +395,31 @@ class GridStrategyTab(QWidget):
             
         grid_data = self.strategy_wrapper.get_strategy_data(uid)
         if grid_data:
+            print(f"[GridStrategyTab] 添加策略 {uid} 到表格，grid_levels: {grid_data.grid_levels}")
             grid_data.data_updated.connect(self._handle_strategy_updated)
             self.grid_table.add_strategy_row(grid_data)
             self.strategy_wrapper.save_strategies(show_message=False)
-
+            
     @show_error_dialog
     def _handle_strategy_setting(self, uid: str):
         grid_data = self.strategy_wrapper.get_strategy_data(uid)
         if grid_data:
-            dialog = GridDialog(grid_data)
+            dialog = GridDialog(grid_data, self.strategy_wrapper)
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.strategy_wrapper.save_strategies(show_message=False)
 
     @show_error_dialog
     def _handle_strategy_start(self, uid: str):
+        grid_data = self.strategy_wrapper.get_strategy_data(uid)  # 修改为 strategy_wrapper
+        if not grid_data:
+            self.show_error_message(f"策略 {uid} 数据不存在")
+            return
+        if not grid_data.grid_levels:
+            self.show_error_message(f"策略 {uid} 未配置网格层级，请先设置网格参数")
+            return
         if self.strategy_wrapper.start_strategy(uid, self.exchange_client):
-            # self.show_message("启动成功", "策略已启动！")
             self.strategy_wrapper.save_strategies(show_message=False)
-
+            
     @show_error_dialog
     def _handle_strategy_stop(self, uid: str):
         if self.strategy_wrapper.stop_strategy(uid, self.exchange_client):
@@ -414,18 +439,6 @@ class GridStrategyTab(QWidget):
                 self.grid_table.remove_strategy(uid)
                 # self.show_message("删除成功", "策略已删除！")
                 self.strategy_wrapper.save_strategies(show_message=False)
-
-    def _handle_check_status_feedback(self):
-        """处理检查状态反馈"""
-        client = self.client_factory.get_client(self.tab_id, self.inst_type)
-        if not client:
-            self.show_message("检查状态", "客户端未连接")
-        elif client.is_connected:
-            ws_status = client.get_ws_status()
-            status_msg = f"客户端状态: 已连接\n公共WebSocket: {'已连接' if ws_status.get('public') else '未连接'}\n私有WebSocket: {'已连接' if ws_status.get('private') else '未连接'}"
-            self.show_message("检查状态", status_msg)
-        else:
-            self.show_message("检查状态", "客户端未连接")
 
     @show_error_dialog
     def _handle_exchange_changed(self, new_exchange: str):
@@ -474,35 +487,17 @@ class GridStrategyTab(QWidget):
         #     return
 
     @show_error_dialog
-    def _handle_strategy_error(self, uid: str, error_msg: str):
-        """处理策略错误事件"""
-        print(f"[GridStrategyTab] 处理策略错误 - UID: {uid}, 错误: {error_msg}")
-        if uid:
-            grid_data = self.strategy_wrapper.get_strategy_data(uid)
-            if grid_data:
-                grid_data.status = "错误停止"
-                self.grid_table.update_strategy_row(uid, grid_data)
-        
-        # 只在这里显示一次错误对话框
-        self.show_dialog("error", "错误", error_msg)
-
-    @show_error_dialog
     def _handle_strategy_updated(self, uid: str):
         """处理策略更新事件 - 可能在非主线程中调用"""
-        # print(f"\n[GridStrategyTab] === 接收到策略更新事件 === {uid}")
         self.update_ui_signal.emit(uid)
 
     @show_error_dialog
     def _update_ui_in_main_thread(self, uid: str):
         """在主线程中更新UI"""
         try:
-            # print(f"\n[GridStrategyTab] === 主线程处理策略更新 === {uid}")
             grid_data = self.strategy_wrapper.get_strategy_data(uid)
             if grid_data:
-                # print(f"[GridStrategyTab] 获取到策略数据: {grid_data.uid}")
-                # print(f"[GridStrategyTab] 开始更新表格...")
                 self.grid_table.update_strategy_row(uid, grid_data)
-                # print(f"[GridStrategyTab] 表格更新完成")
             else:
                 print(f"[GridStrategyTab] 未找到策略数据: {uid}")
         except Exception as e:
@@ -541,17 +536,10 @@ class GridStrategyTab(QWidget):
                 
         return True
 
-    def show_error_message(self, message: str):
-        """显示错误消息对话框"""
-        return self.show_dialog("error", "错误", message)
-
-    def show_message(self, title: str, message: str):
-        """显示普通消息对话框"""
-        return self.show_dialog("info", title, message)
-
     def show_dialog(self, dialog_type: str, title: str, message: str, 
                    buttons=QMessageBox.StandardButton.Ok,
-                   default_button=QMessageBox.StandardButton.Ok) -> QMessageBox.StandardButton:
+                   default_button=QMessageBox.StandardButton.Ok,
+                   trigger_method: str = None) -> QMessageBox.StandardButton:
         """统一的对话框显示管理
         
         Args:
@@ -560,11 +548,26 @@ class GridStrategyTab(QWidget):
             message: 消息内容
             buttons: 按钮选项
             default_button: 默认按钮
+            trigger_method: 触发该对话框的方法名（可选）
             
         Returns:
             用户点击的按钮
         """
-        print(f"[GridStrategyTab] 显示对话框: {dialog_type}, 标题: {title}, 消息: {message}")
+        # 如果没有手动传递 trigger_method，则自动从调用栈获取
+        if trigger_method is None:
+            stack = traceback.extract_stack()
+            for i, frame in enumerate(stack):
+                print(f"栈层 {i}: {frame.name} (文件: {frame.filename}, 行: {frame.lineno})")
+            if len(stack) >= 3:  # 至少需要调用者和当前方法两层
+                caller_frame = stack[-3]  # 倒数第二层是调用者
+                trigger_method = caller_frame.name  # 获取方法名
+        
+        # 在消息中添加触发方法信息
+        full_message = message
+        if trigger_method:
+            full_message = f"触发方法: {trigger_method}\n\n{message}"
+        
+        print(f"[GridStrategyTab] 显示对话框: {dialog_type}, 标题: {title}, 消息: {full_message}")
         dialog_map = {
             "info": QMessageBox.information,
             "warning": QMessageBox.warning,
@@ -573,26 +576,42 @@ class GridStrategyTab(QWidget):
         }
         
         dialog_func = dialog_map.get(dialog_type, QMessageBox.information)
-        return dialog_func(self, title, message, buttons, default_button)
+        return dialog_func(self, title, full_message, buttons, default_button)
+
+    def show_error_message(self, message: str):
+        """显示错误消息对话框"""
+        return self.show_dialog("error", "错误", message)
+
+    def show_message(self, title: str, message: str):
+        """显示普通消息对话框"""
+        return self.show_dialog("info", title, message)
 
     def closeEvent(self, event):
         """处理窗口关闭事件"""
         try:
+            self.is_closing = True  # 设置关闭标志
+            print("[GridStrategyTab] 开始关闭窗口")
+
             # 停止所有策略
             if self.strategy_wrapper.has_running_strategies():
                 print("[GridStrategyTab] 停止所有运行中的策略")
-                self.strategy_wrapper.stop_all_strategies(self.exchange_client)
-            
+                success_count, total = self.strategy_wrapper.stop_all_strategies(self.exchange_client)
+                # 只在调试时显示总结性弹窗，正式版本可注释掉
+                print(f"[GridStrategyTab] 已停止 {success_count}/{total} 个策略")
+                # self.show_message("关闭程序", f"已停止 {success_count}/{total} 个策略")
+            else:
+                print("[GridStrategyTab] 无运行中的策略需要停止")
+
             # 等待保存和加载线程完成
             if hasattr(self.strategy_wrapper, '_save_thread') and \
-               self.strategy_wrapper._save_thread and \
-               self.strategy_wrapper._save_thread.is_alive():
+            self.strategy_wrapper._save_thread and \
+            self.strategy_wrapper._save_thread.is_alive():
                 print("[GridStrategyTab] 等待保存线程完成...")
                 self.strategy_wrapper._save_thread.join(timeout=2)
                 
             if hasattr(self.strategy_wrapper, '_load_thread') and \
-               self.strategy_wrapper._load_thread and \
-               self.strategy_wrapper._load_thread.is_alive():
+            self.strategy_wrapper._load_thread and \
+            self.strategy_wrapper._load_thread.is_alive():
                 print("[GridStrategyTab] 等待加载线程完成...")
                 self.strategy_wrapper._load_thread.join(timeout=2)
             

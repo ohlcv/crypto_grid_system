@@ -14,7 +14,7 @@ from src.utils.common.tools import find_value
 from .grid_core import GridData
 from src.utils.logger.log_helper import grid_logger, trade_logger
 from src.utils.error.error_handler import error_handler
-
+from .strategy_interface import StrategyManagerInterface  # 导入接口
 
 class PriceState:
     """价格状态跟踪器"""
@@ -69,37 +69,40 @@ class OrderState:
             self.pending_order_id = None
             self.current_level = None
 
-
 class GridTrader(QObject):
-    """网格交易策略执行器"""
-    
-    status_changed = Signal(str, str)  # uid, status
-    error_occurred = Signal(str, str)  # uid, error_message
-    save_requested = Signal(str)  # 新增信号，用于请求保存
+    status_changed = Signal(str, str)
+    error_occurred = Signal(str, str)
+    save_requested = Signal(str)
 
-    def __init__(self, grid_data: GridData):
+    def __init__(self, manager: StrategyManagerInterface, uid: str):
         super().__init__()
-        print(f"\n[GridTrader] === 初始化网格交易器 === {grid_data.uid}")
-        self.logger = grid_logger
-        self.trade_logger = trade_logger
-
-        self.grid_data = grid_data
+        self.manager = manager
+        self.uid = uid
         self.client = None
-        
         self._price_state = PriceState()
         self._order_state = OrderState()
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread = None
         self._stop_flag = threading.Event()
         self._lock = threading.Lock()
+        self.logger = grid_logger  # 初始化 logger
+        self.trade_logger = trade_logger  # 初始化 trade_logger
+        # 可选：记录初始化的 grid_data 用于调试
+        grid_data = self.grid_data  # 通过 @property 获取
+        if grid_data:
+            print(f"[GridTrader] 初始化网格交易器 - uid: {uid}, pair: {grid_data.symbol_config.pair}, direction: {grid_data.direction}")
 
-        print(f"[GridTrader] 交易器初始化完成: {grid_data.uid}")
-        print(f"  交易对: {grid_data.symbol_config.pair}")
-        print(f"  方向: {grid_data.direction}")
-        print(f"  总层数: {len(grid_data.grid_levels)}")
+    @property
+    def grid_data(self) -> Optional[GridData]:
+        """动态获取最新的 GridData"""
+        return self.manager.get_strategy_data(self.uid)
+    
+    def _on_data_updated(self, uid: str):
+        if uid == self.uid:
+            print(f"[GridTrader] 数据更新 - ticker_data: {self.grid_data.ticker_data}")
 
     def set_client(self, client: BaseClient):
-        print(f"\n[GridTrader] === 设置交易所客户端 === {self.grid_data.uid}")
+        print(f"\n[GridTrader] === 设置交易所客户端 === {self.uid}")
         print(f"[GridTrader] 新客户端: {client}")
         
         if self.client:
@@ -115,6 +118,56 @@ class GridTrader(QObject):
             print("[GridTrader] 连接新client的order_updated信号")
             client.order_updated.connect(self._on_order_update)
             print("[GridTrader] 客户端设置完成")
+
+    def _run_strategy(self):
+        thread_name = threading.current_thread().name
+        thread_id = threading.current_thread().ident
+        grid_data = self.grid_data
+        if not grid_data:
+            print(f"[GridTrader] 错误: 未找到策略数据 - uid: {self.uid}")
+            return
+        print(f"\n[GridTrader] === 策略线程启动 ===")
+        print(f"[GridTrader] 线程名称: {thread_name}")
+        print(f"[GridTrader] 线程ID: {thread_id}")
+        print(f"[GridTrader] 策略初始状态:")
+        print(f"  交易对: {grid_data.symbol_config.pair}")
+        print(f"  方向: {grid_data.direction}")
+        print(f"  总层数: {len(grid_data.grid_levels)}")
+        print(f"  运行标志: {self._running}")
+        
+        last_process_time = time.time()
+        last_price = None
+        min_process_interval = 0.1
+        
+        while self._running and not self._stop_flag.is_set():
+            try:
+                current_time = time.time()
+                if current_time - last_process_time < min_process_interval:
+                    time.sleep(0.01)
+                    continue
+                    
+                if not self._order_state.pending_order_id:
+                    grid_data = self.grid_data  # 每次循环获取最新数据
+                    if not grid_data:
+                        print(f"[GridTrader] 错误: 在运行中丢失策略数据 - uid: {self.uid}")
+                        break
+                    current_price = grid_data.ticker_data.lastPr if grid_data.ticker_data else None
+                    # print(f"[GridTrader] 当前价格: {current_price}, 上次价格: {last_price}, ticker_data: {grid_data.ticker_data}")
+                    if current_price and current_price != last_price:
+                        # print(f"[GridTrader] 价格变更，处理更新: {current_price}")
+                        self._process_price_update(current_price)
+                        last_price = current_price
+                    # elif not current_price:
+                        # print(f"[GridTrader] 未收到最新价格，检查行情订阅和 GridData 更新")
+                
+                last_process_time = current_time
+                
+            except Exception as e:
+                print(f"[GridTrader] 策略线程 {thread_name} 执行错误: {e}")
+                self.handle_error(f"策略执行错误: {str(e)}")
+                break
+
+        print(f"[GridTrader] === 策略线程退出 ===")
 
     def stop(self) -> bool:
         print(f"\n[GridTrader] === 停止策略 === {self.grid_data.uid}")
@@ -230,52 +283,6 @@ class GridTrader(QObject):
             self.error_occurred.emit(self.grid_data.uid, error_msg)
             return False
 
-    def _run_strategy(self):
-        thread_name = threading.current_thread().name
-        thread_id = threading.current_thread().ident
-        print(f"\n[GridTrader] === 策略线程启动 ===")
-        print(f"[GridTrader] 线程名称: {thread_name}")
-        print(f"[GridTrader] 线程ID: {thread_id}")
-        print(f"[GridTrader] 策略初始状态:")
-        print(f"  交易对: {self.grid_data.symbol_config.pair}")
-        print(f"  方向: {self.grid_data.direction}")
-        print(f"  总层数: {len(self.grid_data.grid_levels)}")
-        print(f"  运行标志: {self._running}")
-        
-        last_process_time = time.time()
-        last_price = None
-        min_process_interval = 0.1
-        
-        while self._running and not self._stop_flag.is_set():
-            try:
-                current_time = time.time()
-                
-                if current_time - last_process_time < min_process_interval:
-                    time.sleep(0.01)
-                    continue
-                    
-                if not self._order_state.pending_order_id:
-                    current_price = self.grid_data.ticker_data.lastPr if self.grid_data.ticker_data else None
-                    if current_price and current_price != last_price:
-                        self._process_price_update(current_price)
-                        last_price = current_price
-                
-                last_process_time = current_time
-                
-            except Exception as e:
-                print(f"[GridTrader] 策略线程 {thread_name} 执行错误: {e}")
-                print(f"[GridTrader] 错误详情: {traceback.format_exc()}")
-                self.handle_error(f"策略执行错误: {str(e)}")
-                break
-
-        print(f"[GridTrader] === 策略线程退出 ===")
-        print(f"[GridTrader] 线程名称: {thread_name}")
-        print(f"[GridTrader] 线程ID: {thread_id}")
-        print(f"[GridTrader] 退出原因: {'停止标志被设置' if self._stop_flag.is_set() else '运行标志为False'}")
-        self._running = False
-        self.grid_data.status = "已停止"
-        self.grid_data.data_updated.emit(self.grid_data.uid)
-
     def handle_error(self, error_msg: str):
         print(f"[GridTrader] 策略错误: {error_msg}")
         self.error_occurred.emit(self.grid_data.uid, error_msg)
@@ -353,24 +360,29 @@ class GridTrader(QObject):
         print(f"\n[GridTrader] === 检查开仓条件 === {self.grid_data.symbol_config.pair} {self.grid_data.uid}")
         next_level = self.grid_data.get_next_level()
         total_levels = len(self.grid_data.grid_levels)
-        
+        last_level = self.grid_data.get_last_filled_level()
+        print(f"[GridTrader] 检查开仓: next_level={next_level}, total_levels={total_levels}, last_level={last_level}")   
         if next_level is None or next_level >= total_levels:
             print("[GridTrader] 已达到最大层数或超出范围，不再开仓")
             return
 
-        level_config = self.grid_data.grid_levels[next_level]
-        is_long = self.grid_data.is_long()
-        print(f"[GridTrader] 开仓百分比: {level_config.interval_percent}%")
-        
+        # 检查是否为第一层网格
         if next_level == 0:
             if self._check_first_grid(current_price):
                 self._place_order(next_level)
             return
 
-        last_tp_price = self._get_last_take_profit_price(next_level)
+        # 已存在开仓层级的逻辑
         last_level = self.grid_data.get_last_filled_level()
         if last_level is None:
+            print("[GridTrader] 未找到已开仓层级，但允许开仓第一层网格")
             return
+
+
+        level_config = self.grid_data.grid_levels[next_level]
+        last_tp_price = self._get_last_take_profit_price(next_level)
+        is_long = self.grid_data.is_long()
+        # print(f"[GridTrader] 开仓百分比: {level_config.interval_percent}%")
             
         if last_level not in self.grid_data.grid_levels:
             print(f"[GridTrader] 警告: 找不到层级 {last_level} 的网格配置")
@@ -592,33 +604,43 @@ class GridTrader(QObject):
             quote_precision = self.grid_data.symbol_config.quote_precision
             price_precision = self.grid_data.symbol_config.price_precision
             min_quote_amount = self.grid_data.symbol_config.min_quote_amount
+            min_base_amount = self.grid_data.symbol_config.min_base_amount
 
-            # 调整 quote_size 精度并检查最小值
+            # 计算 quote_size 和 base_size
             quote_size = self._adjust_order_size(Decimal(str(level_config.invest_amount)), quote_precision, min_quote_amount, "投资金额")
-
-            # 对于市价单，计算 base_size（仅用于日志）
             current_price = self.grid_data.ticker_data.lastPr if self.grid_data.ticker_data else None
-            if current_price:
-                base_size = adjust_decimal_places(quote_size / current_price, base_precision)
-                print(f"[GridTrader] 计算基础数量: {base_size} (仅参考)")
-            else:
-                print("[GridTrader] 当前价格不可用，无法计算基础数量")
+            if not current_price:
+                error_msg = "当前价格不可用，无法计算基础数量"
+                self.logger.error(error_msg)
+                self.handle_error(error_msg)
+                return
 
-            # 调整价格精度（如果使用限价单）
+            base_size = self._adjust_order_size(quote_size / current_price, base_precision, min_base_amount, "基础数量")
             price = adjust_decimal_places(current_price, price_precision) if current_price else None
 
+            # 构建完整的 OrderRequest，所有参数都填充
             request = OrderRequest(
                 inst_type=self.grid_data.inst_type,
                 pair=self.grid_data.symbol_config.pair,
                 symbol=self.grid_data.symbol_config.symbol,
-                position_side=PositionSide.LONG if is_long else PositionSide.SHORT,
+                base_coin=self.grid_data.symbol_config.base_coin,
+                quote_coin=self.grid_data.symbol_config.quote_coin,
                 side=OrderSide.BUY if is_long else OrderSide.SELL,
                 trade_side=TradeSide.OPEN,
+                position_side=PositionSide.LONG if is_long else PositionSide.SHORT,
                 order_type=OrderType.MARKET,
-                quote_size=quote_size,
+                base_size=base_size if self.grid_data.inst_type == InstType.FUTURES else None,
+                quote_size=quote_size if self.grid_data.inst_type == InstType.SPOT else None,
                 price=price,
-                client_order_id=f"grid_{self.grid_data.uid}_{level}_{int(time.time()*1000)}"
+                client_order_id=f"grid_{self.grid_data.uid}_{level}_{int(time.time()*1000)}",
+                time_in_force="gtc",  # 默认值，可根据需要调整
+                reduce_only=False,    # 开仓不涉及减仓
+                leverage=20 if self.grid_data.inst_type == InstType.FUTURES else None,  # 示例值，可配置
+                margin_mode="crossed" if self.grid_data.inst_type == InstType.FUTURES else None,  # 示例值
+                extra_params={}       # 可扩展额外参数
             )
+
+            print(f"[GridTrader] 下单参数: inst_type={request.inst_type}, base_size={request.base_size}, quote_size={request.quote_size}")
 
             response = self.client.rest_api.place_order(request)
 
@@ -651,34 +673,43 @@ class GridTrader(QObject):
         try:
             level_config = self.grid_data.grid_levels[level]
             is_long = self.grid_data.is_long()
-            
+
             # 获取精度参数
             base_precision = self.grid_data.symbol_config.base_precision
             price_precision = self.grid_data.symbol_config.price_precision
             min_base_amount = self.grid_data.symbol_config.min_base_amount
 
-            # 调整 base_size 精度并检查最小值
+            # 调整 base_size
             base_size = self._adjust_order_size(level_config.filled_amount, base_precision, min_base_amount, "持仓数量")
-
-            # 调整价格精度
             current_price = self.grid_data.ticker_data.lastPr if self.grid_data.ticker_data else None
             price = adjust_decimal_places(current_price, price_precision) if current_price else None
 
+            # 构建完整的 OrderRequest
             request = OrderRequest(
                 inst_type=self.grid_data.inst_type,
                 pair=self.grid_data.symbol_config.pair,
                 symbol=self.grid_data.symbol_config.symbol,
-                position_side=PositionSide.LONG if is_long else PositionSide.SHORT,
+                base_coin=self.grid_data.symbol_config.base_coin,
+                quote_coin=self.grid_data.symbol_config.quote_coin,
                 side=OrderSide.SELL if is_long else OrderSide.BUY,
                 trade_side=TradeSide.CLOSE,
+                position_side=PositionSide.LONG if is_long else PositionSide.SHORT,
                 order_type=OrderType.MARKET,
                 base_size=base_size,
+                quote_size=None,  # 平仓不涉及 quote_size
                 price=price,
-                client_order_id=f"grid_{self.grid_data.uid}_{level}_{int(time.time()*1000)}_tp"
+                client_order_id=f"grid_{self.grid_data.uid}_{level}_{int(time.time()*1000)}_tp",
+                time_in_force="gtc",  # 默认值
+                reduce_only=True,     # 平仓订单通常为减仓
+                leverage=20 if self.grid_data.inst_type == InstType.FUTURES else None,  # 示例值
+                margin_mode="crossed" if self.grid_data.inst_type == InstType.FUTURES else None,  # 示例值
+                extra_params={}       # 可扩展额外参数
             )
 
+            print(f"[GridTrader] 止盈下单参数: inst_type={request.inst_type}, base_size={request.base_size}")
+
             response = self.client.rest_api.place_order(request)
-            
+
             if response.success:
                 self._order_state.set_pending_order(response.order_id, level)
                 print(f"[GridTrader] 止盈订单已提交: {response.order_id}")
@@ -711,7 +742,7 @@ class GridTrader(QObject):
         try:
             self.logger.info(f"{self.grid_data.inst_type} {self.grid_data.uid} {self.grid_data.symbol_config.pair} 准备全平...")
             self.logger.info(f"  原因: {reason}")
-            
+
             # 获取所有已填满的层级
             filled_levels = [level for level, config in self.grid_data.grid_levels.items() if config.is_filled]
             if not filled_levels:
@@ -722,27 +753,41 @@ class GridTrader(QObject):
             if total_filled_amount <= 0:
                 return True, "无可平仓数量"
 
-            # 调整数量精度到交易对要求
+            # 调整数量精度
             base_precision = self.grid_data.symbol_config.base_precision
             min_base_amount = self.grid_data.symbol_config.min_base_amount
             adjusted_amount = self._adjust_order_size(total_filled_amount, base_precision, min_base_amount, "总持仓数量")
             print(f"[GridTrader] 调整后的总持仓数量: {adjusted_amount} (精度: {base_precision})")
 
+            current_price = self.grid_data.ticker_data.lastPr if self.grid_data.ticker_data else None
+            price = adjust_decimal_places(current_price, self.grid_data.symbol_config.price_precision) if current_price else None
+
+            # 构建完整的 OrderRequest
             request = OrderRequest(
                 inst_type=self.grid_data.inst_type,
                 pair=self.grid_data.symbol_config.pair,
                 symbol=self.grid_data.symbol_config.symbol,
-                position_side=PositionSide.LONG if self.grid_data.is_long() else PositionSide.SHORT,
+                base_coin=self.grid_data.symbol_config.base_coin,
+                quote_coin=self.grid_data.symbol_config.quote_coin,
                 side=OrderSide.SELL if self.grid_data.is_long() else OrderSide.BUY,
                 trade_side=TradeSide.CLOSE,
+                position_side=PositionSide.LONG if self.grid_data.is_long() else PositionSide.SHORT,
                 order_type=OrderType.MARKET,
                 base_size=adjusted_amount,
-                price=self.grid_data.ticker_data.lastPr if self.grid_data.ticker_data else None,
-                client_order_id=f"grid_close_all_{self.grid_data.uid}_{int(time.time()*1000)}"
+                quote_size=None,  # 全平不涉及 quote_size
+                price=price,
+                client_order_id=f"grid_close_all_{self.grid_data.uid}_{int(time.time()*1000)}",
+                time_in_force="gtc",  # 默认值
+                reduce_only=True,     # 全平为减仓
+                leverage=20 if self.grid_data.inst_type == InstType.FUTURES else None,  # 示例值
+                margin_mode="crossed" if self.grid_data.inst_type == InstType.FUTURES else None,  # 示例值
+                extra_params={}       # 可扩展额外参数
             )
-            
+
+            print(f"[GridTrader] 全平参数: inst_type={request.inst_type}, base_size={request.base_size}")
+
             response = self.client.rest_api.closeAllPositionsMarket(request)
-            
+
             if response.success:
                 print(f"[GridTrader] 全平订单提交成功: {response.order_id}")
                 print(f"[GridTrader] 调用函数: {response.function_name}")
