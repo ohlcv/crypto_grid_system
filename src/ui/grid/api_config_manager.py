@@ -47,7 +47,7 @@ class APIConfigManager(QObject):
         # 添加状态检查定时器
         self.status_check_timer = QTimer(self)
         self.status_check_timer.timeout.connect(self._check_connection_status)
-        self.status_check_timer.start(5000)  # 每5秒检查一次
+        self.status_check_timer.start(60000)  # 每60秒检查一次
 
     def update_connection_status(self, status: str):
         """更新连接状态"""
@@ -182,50 +182,68 @@ class APIConfigManager(QObject):
                 self.update_ws_status(False, ws_status.get('private', False))
 
     def _check_connection_status(self):
-        """定期检查连接状态"""
         client = self.client_factory.get_client(self.tab_id)
         if client:
             ws_status = client.get_ws_status()
-            if ws_status['public'] != self.public_ws_connected:
-                self.update_ws_status(True, ws_status['public'])
-            if ws_status['private'] != self.private_ws_connected:
-                self.update_ws_status(False, ws_status['private'])
-            
-            # 如果都断开了，更新连接状态
-            if not ws_status['public'] and not ws_status['private']:
+            # print(f"[APIConfigManager] 检查WebSocket状态: {ws_status}")
+            self.update_ws_status(True, ws_status.get('public', False))
+            self.update_ws_status(False, ws_status.get('private', False))
+            if ws_status['public'] and ws_status['private']:
+                self.update_connection_status("就绪")
+            elif not ws_status['public'] and not ws_status['private']:
                 self.update_connection_status("未连接")
+            else:
+                self.update_connection_status("部分连接")
+
+    def _connect_client_signals(self, client: BaseClient):
+        try:
+            print(f"[APIConfigManager] === 连接客户端信号 ===")
+            print(f"  客户端类型: {client.inst_type.name}")
+            
+            # 断开现有连接
+            try:
+                client.connection_status.disconnect()
+                client.public_connected.disconnect()
+                client.public_disconnected.disconnect()
+                client.private_connected.disconnect()
+                client.private_disconnected.disconnect()
+            except TypeError:
+                pass
+
+            # 连接信号
+            client.connection_status.connect(self.update_connection_status)
+            client.public_connected.connect(lambda: self.update_ws_status(True, True))
+            client.public_disconnected.connect(lambda: self.update_ws_status(True, False))
+            client.private_connected.connect(lambda: self.update_ws_status(False, True))
+            client.private_disconnected.connect(lambda: self.update_ws_status(False, False))
+
+            # 初始状态同步
+            ws_status = client.get_ws_status()
+            self.update_ws_status(True, ws_status.get('public', False))
+            self.update_ws_status(False, ws_status.get('private', False))
+
+            print(f"[APIConfigManager] 客户端信号连接完成")
+        except Exception as e:
+            print(f"[APIConfigManager] 连接客户端信号失败: {e}")
+            self.config_error.emit(f"连接客户端信号失败: {str(e)}")
 
     def update_ws_status(self, is_public: bool, connected: bool):
-        """更新WebSocket状态"""
-        # print(f"\n=== WebSocket状态更新 ===")
-        # print(f"[APIConfigManager] 收到更新: {'公有' if is_public else '私有'} - {'已连接' if connected else '未连接'}")
-        
-        # 添加断开连接的处理
-        if not connected:
-            if is_public and self.public_ws_connected:
-                print("[APIConfigManager] 公共WebSocket断开连接")
-            elif not is_public and self.private_ws_connected:
-                print("[APIConfigManager] 私有WebSocket断开连接")
-
-        # 更新状态
+        """更新WebSocket状态
+        Args:
+            is_public (bool): 是否是公共WS
+            connected (bool): 是否连接
+        """
+        # print(f"[APIConfigManager] 更新WebSocket状态 - {'公共' if is_public else '私有'}: {'已连接' if connected else '未连接'}")
         if is_public:
-            if self.public_ws_connected != connected:  # 只在状态变化时更新
-                self.public_ws_connected = connected
-                self.public_ws_label.setText(f"公有：{'✓' if connected else '✗'}")
-                self.public_ws_label.setStyleSheet(f"color: {'green' if connected else 'red'}")
-                # print(f"[APIConfigManager] 更新后公有状态: {self.public_ws_connected}")
+            self.public_ws_connected = connected
+            self.public_ws_label.setText(f"公有：{'✓' if connected else '✗'}")
+            self.public_ws_label.setStyleSheet(f"color: {'green' if connected else 'red'}")
         else:
-            if self.private_ws_connected != connected:  # 只在状态变化时更新
-                self.private_ws_connected = connected
-                self.private_ws_label.setText(f"私有：{'✓' if connected else '✗'}")
-                self.private_ws_label.setStyleSheet(f"color: {'green' if connected else 'red'}")
-                # print(f"[APIConfigManager] 更新后私有状态: {self.private_ws_connected}")
+            self.private_ws_connected = connected
+            self.private_ws_label.setText(f"私有：{'✓' if connected else '✗'}")
+            self.private_ws_label.setStyleSheet(f"color: {'green' if connected else 'red'}")
             
-        # 强制更新UI
-        QApplication.processEvents()  # 处理所有待处理的事件
-        # print(f"[APIConfigManager] 当前状态:")
-        # print(f"- 公有连接状态: {self.public_ws_connected}")
-        # print(f"- 私有连接状态: {self.private_ws_connected}")
+        QApplication.processEvents()  # 强制更新UI
 
     def _create_default_config(self) -> dict:
         """创建默认配置"""

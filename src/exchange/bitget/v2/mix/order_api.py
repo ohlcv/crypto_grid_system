@@ -3,7 +3,7 @@ from ...client import Client
 from ...consts import GET, POST
 
 
-class MixOrderApi(Client):
+class OrderApi(Client):
     def __init__(self, api_key, api_secret_key, passphrase, use_server_time=False, first=False):
         """初始化 MixOrderApi 实例。"""
         Client.__init__(self, api_key, api_secret_key, passphrase, use_server_time, first)

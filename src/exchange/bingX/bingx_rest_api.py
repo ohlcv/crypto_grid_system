@@ -116,12 +116,12 @@ class BingXRestAPI:
         except json.JSONDecodeError as e:
             raise BingXAPIException(f"Failed to parse response: {str(e)}")
     
-    def get_account_info(self) -> Dict:
+    def get_info(self) -> Dict:
         """获取账户信息"""
         endpoint = "/api/v1/account" if self._is_spot else "/api/v1/user"
         return self._request('GET', endpoint)
 
-    def get_pairs(self, symbol: str = None) -> List[Dict]:
+    def get_symbol_config(self, symbol: str = None) -> List[Dict]:
         """获取交易对信息
         
         Args:

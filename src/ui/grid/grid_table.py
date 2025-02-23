@@ -1,5 +1,3 @@
-# src/ui/components/grid_table.py
-
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -30,22 +28,22 @@ class GridColumn(Enum):
     TP_TRIGGER = auto()     # 止盈触发价
     ATP_TRIGGER = auto()    # 均价止盈触发价
     ASL_TRIGGER = auto()    # 均价止损触发价
-    AVG_TP = auto()        # 均价止盈
-    AVG_SL = auto()        # 均价止损
-    TOTAL_TP = auto()      # 总体止盈
-    TOTAL_SL = auto()      # 总体止损
-    POS_VALUE = auto()     # 持仓价值
-    POS_PNL = auto()       # 持仓盈亏
-    REALIZED_PNL = auto()  # 实现盈亏
-    EXCHANGE = auto()      # 交易所
-    UID = auto()           # 标识符
+    AVG_TP = auto()         # 均价止盈
+    AVG_SL = auto()         # 均价止损
+    TOTAL_TP = auto()       # 总体止盈
+    TOTAL_SL = auto()       # 总体止损
+    POS_VALUE = auto()      # 持仓价值
+    POS_PNL = auto()        # 持仓盈亏
+    REALIZED_PNL = auto()   # 实现盈亏
+    EXCHANGE = auto()       # 交易所
+    UID = auto()            # 标识符
 
 @dataclass
 class GridColumnConfig:
     """列配置"""
     name: str              # 显示名称
     width: int            # 列宽
-    editable: bool = False  # 是否可编辑
+    editable: bool = False # 是否可编辑
     visible: bool = True   # 是否可见
 
 class GridColumnManager:
@@ -76,12 +74,10 @@ class GridColumnManager:
 
     @classmethod
     def get_visible_columns(cls) -> list:
-        """获取可见列"""
         return [col for col, cfg in cls.COLUMN_CONFIGS.items() if cfg.visible]
     
     @classmethod
     def get_column_index(cls, column: GridColumn) -> int:
-        """获取列索引"""
         visible_columns = cls.get_visible_columns()
         try:
             return visible_columns.index(column)
@@ -90,12 +86,10 @@ class GridColumnManager:
 
     @classmethod
     def get_column_name(cls, column: GridColumn) -> str:
-        """获取列显示名称"""
         return cls.COLUMN_CONFIGS[column].name
 
     @classmethod
     def get_column_width(cls, column: GridColumn) -> int:
-        """获取列宽"""
         return cls.COLUMN_CONFIGS[column].width
 
 class GridDisplayModel:
@@ -103,51 +97,45 @@ class GridDisplayModel:
     def __init__(self):
         self._data: Dict[GridColumn, Any] = {}
         
-    def update(self, grid_data) -> None:
+    def update(self, grid_data: GridData) -> None:
         """从GridData更新显示数据"""
         position_metrics = grid_data.calculate_position_metrics()
         grid_status = grid_data.get_grid_status()
         tp_sl_prices = grid_data.calculate_avg_price_tp_sl_prices()
         
         updates = {
-            GridColumn.PAIR: grid_data.pair,
+            GridColumn.PAIR: grid_data.symbol_config.pair,
             GridColumn.DIRECTION: grid_data.direction.value,
-            GridColumn.STATUS: grid_data.row_dict.get("运行状态", ""),
-            GridColumn.GRID_LEVEL: f"{grid_status['filled_levels']}/{grid_status['total_levels']}",
-            GridColumn.LAST_PRICE: str(grid_data.last_price) if grid_data.last_price else "-",
-            GridColumn.LAST_TIME: grid_data.last_update_time.strftime("%H:%M:%S") if grid_data.last_update_time else "-",
+            GridColumn.STATUS: grid_data.status,
+            GridColumn.GRID_LEVEL: f"{grid_status['filled_levels']}/{grid_status['total_levels']}" if grid_status['total_levels'] > 0 else "未设置",
+            GridColumn.LAST_PRICE: str(grid_data.ticker_data.lastPr) if grid_data.ticker_data else "-",
+            GridColumn.LAST_TIME: datetime.fromtimestamp(grid_data.ticker_data.ts / 1000).strftime("%H:%M:%S") if grid_data.ticker_data else "-",
             GridColumn.AVG_PRICE: str(position_metrics['avg_price']),
             GridColumn.POS_VALUE: str(position_metrics['total_value']),
             GridColumn.POS_PNL: str(position_metrics['unrealized_pnl']),
             GridColumn.REALIZED_PNL: str(grid_data.total_realized_profit),
-            GridColumn.EXCHANGE: grid_data.exchange,
+            GridColumn.EXCHANGE: grid_data.exchange_str,
             GridColumn.UID: grid_data.uid,
-            # ... 其他列的更新
+            GridColumn.OPEN_TRIGGER: str(grid_data.open_trigger_price) if hasattr(grid_data, 'open_trigger_price') and grid_data.open_trigger_price else "-",
+            GridColumn.TP_TRIGGER: str(grid_data.tp_trigger_price) if hasattr(grid_data, 'tp_trigger_price') and grid_data.tp_trigger_price else "-",
+            GridColumn.ATP_TRIGGER: str(tp_sl_prices['avg_tp_price']) if tp_sl_prices['avg_tp_price'] else "-",
+            GridColumn.ASL_TRIGGER: str(tp_sl_prices['avg_sl_price']) if tp_sl_prices['avg_sl_price'] else "-",
+            GridColumn.AVG_TP: str(grid_data.avg_price_take_profit_config.profit_percent) if grid_data.avg_price_take_profit_config.enabled else "-",
+            GridColumn.AVG_SL: str(grid_data.avg_price_stop_loss_config.loss_percent) if grid_data.avg_price_stop_loss_config.enabled else "-",
+            GridColumn.TOTAL_TP: str(grid_data.take_profit_config.profit_amount) if grid_data.take_profit_config.enabled else "-",
+            GridColumn.TOTAL_SL: str(grid_data.stop_loss_config.loss_amount) if grid_data.stop_loss_config.enabled else "-",
         }
         
-        if tp_sl_prices['avg_tp_price']:
-            updates[GridColumn.ATP_TRIGGER] = str(tp_sl_prices['avg_tp_price'])
-        if tp_sl_prices['avg_sl_price']:
-            updates[GridColumn.ASL_TRIGGER] = str(tp_sl_prices['avg_sl_price'])
-            
         self._data.update(updates)
         
     def get_value(self, column: GridColumn) -> Any:
-        """获取列值"""
         return self._data.get(column)
 
     def get_all_values(self) -> Dict[GridColumn, Any]:
-        """获取所有值"""
         return self._data.copy()
 
 class GridUpdater(QObject):
-    """UI更新管理器
-    
-    Signals:
-        batch_update (str, dict): 批量更新信号
-            - str: 策略ID
-            - dict: {GridColumn: str} 格式的更新数据
-    """
+    """UI更新管理器"""
     batch_update = Signal(str, dict)
     
     def __init__(self):
@@ -156,14 +144,11 @@ class GridUpdater(QObject):
         self._display_models: Dict[str, GridDisplayModel] = {}
         
     def schedule_update(self, uid: str, columns: Set[GridColumn] = None):
-        """计划更新"""
         if columns is None:
-            # 更新所有列
             columns = set(GridColumn)
         self._pending_updates[uid].update(columns)
         
     def commit_updates(self):
-        """提交所有待更新"""
         for uid, columns in self._pending_updates.items():
             if uid in self._display_models:
                 model = self._display_models[uid]
@@ -172,26 +157,23 @@ class GridUpdater(QObject):
         self._pending_updates.clear()
         
     def register_strategy(self, uid: str) -> GridDisplayModel:
-        """注册策略显示模型"""
         model = GridDisplayModel()
         self._display_models[uid] = model
         return model
         
     def unregister_strategy(self, uid: str):
-        """注销策略显示模型"""
         self._display_models.pop(uid, None)
         self._pending_updates.pop(uid, None)
 
 class GridTable(QTableWidget):
     """网格策略表格组件"""
     
-    # 信号定义
-    strategy_setting_requested = Signal(str)    # uid
-    strategy_start_requested = Signal(str)      # uid  
-    strategy_stop_requested = Signal(str)       # uid
-    strategy_delete_requested = Signal(str)     # uid
-    strategy_close_requested = Signal(str)      # uid
-    strategy_refresh_requested = Signal(str)    # uid
+    strategy_setting_requested = Signal(str)
+    strategy_start_requested = Signal(str)
+    strategy_stop_requested = Signal(str)
+    strategy_delete_requested = Signal(str)
+    strategy_close_requested = Signal(str)
+    strategy_refresh_requested = Signal(str)
     dialog_requested = Signal(str, str, str)
     
     def __init__(self, strategy_wrapper: StrategyManagerWrapper):
@@ -200,15 +182,13 @@ class GridTable(QTableWidget):
         
         self.strategy_wrapper = strategy_wrapper
         self.updater = GridUpdater()
-        # 连接批量更新信号
         self.updater.batch_update.connect(self._handle_batch_update)
         
         self.setup_table()
 
     def _handle_batch_update(self, uid: str, updates: Dict[GridColumn, Any]):
-        """处理批量更新"""
         try:
-            # 查找对应行
+            # print(f"[GridTable] 处理批量更新: UID={uid}, Updates={updates}")
             row = -1
             uid_col = GridColumnManager.get_column_index(GridColumn.UID)
             for i in range(self.rowCount()):
@@ -218,103 +198,88 @@ class GridTable(QTableWidget):
                     break
                     
             if row == -1:
-                print(f"[GridTable] 未找到策略行: {uid}")
+                print(f"[GridTable] 未找到策略行: UID={uid}, 当前行数={self.rowCount()}")
+                # 打印所有行的 UID 以排查问题
+                for i in range(self.rowCount()):
+                    uid_item = self.item(i, uid_col)
+                    print(f"[GridTable] Row={i}, UID={uid_item.text() if uid_item else 'None'}")
                 return
                 
-            # 更新单元格
             for column, value in updates.items():
                 if column == GridColumn.OPERATIONS:
-                    continue  # 操作按钮需要特殊处理
+                    continue
                     
                 col_idx = GridColumnManager.get_column_index(column)
                 if col_idx >= 0:
-                    # 为None的值显示为"-"
                     display_value = "-" if value is None else str(value)
-                    
                     item = QTableWidgetItem(display_value)
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                     self.setItem(row, col_idx, item)
+                    # print(f"[GridTable] 更新单元格: Row={row}, Col={col_idx}, Value={display_value}")
                     
         except Exception as e:
             print(f"[GridTable] 批量更新失败: {e}")
             print(f"[GridTable] 错误详情: {traceback.format_exc()}")
-        
+
     def setup_table(self):
-        """设置表格基本属性"""
-        visible_columns = GridColumnManager.get_visible_columns()
-        
-        # 设置列标题
-        headers = [GridColumnManager.get_column_name(col) for col in visible_columns]
+        headers = [GridColumnManager.get_column_name(col) for col in GridColumnManager.get_visible_columns()]
         self.setHorizontalHeaderLabels(headers)
         
-        # 设置列宽
-        for i, col in enumerate(visible_columns):
+        for i, col in enumerate(GridColumnManager.get_visible_columns()):
             self.setColumnWidth(i, GridColumnManager.get_column_width(col))
         
-        # 设置表格属性
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        
-        # 设置样式
-        # self.setStyleSheet("""
-        #     QTableWidget {
-        #         gridline-color: #E5E5E5;
-        #         background-color: white;
-        #         border: 1px solid #D3D3D3;
-        #     }
-        #     QTableWidget::item {
-        #         padding: 5px;
-        #     }
-        #     QHeaderView::section {
-        #         background-color: #F5F5F5;
-        #         padding: 5px;
-        #         border: none;
-        #         border-right: 1px solid #D3D3D3;
-        #         border-bottom: 1px solid #D3D3D3;
-        #     }
-        # """)
 
     def add_strategy_row(self, grid_data: GridData):
         try:
-            # 创建显示模型
+            print(f"[GridTable] 添加策略行: UID={grid_data.uid}, Pair={grid_data.symbol_config.pair}")
             display_model = self.updater.register_strategy(grid_data.uid)
             display_model.update(grid_data)
             
-            # 添加新行
             row = self.rowCount()
             self.insertRow(row)
+            print(f"[GridTable] 已插入新行: Row={row}")
             
-            # 创建操作按钮
-            operation_status = grid_data.row_dict.get("操作", {"开仓": True, "平仓": True})
+            # 初始化关键单元格
+            uid_col = GridColumnManager.get_column_index(GridColumn.UID)
+            pair_col = GridColumnManager.get_column_index(GridColumn.PAIR)
+            status_col = GridColumnManager.get_column_index(GridColumn.STATUS)
+            
+            self.setItem(row, uid_col, QTableWidgetItem(grid_data.uid))
+            self.setItem(row, pair_col, QTableWidgetItem(grid_data.symbol_config.pair))
+            self.setItem(row, status_col, QTableWidgetItem(grid_data.status))
+            
+            # 设置操作按钮
+            operation_status = grid_data.operations
             self._create_operation_buttons(row, grid_data.uid, operation_status)
             
-            # 更新所有列
+            # 触发完整更新
             self.updater.schedule_update(grid_data.uid)
             self.updater.commit_updates()
+            print(f"[GridTable] 已触发更新: UID={grid_data.uid}")
             
         except Exception as e:
             print(f"[GridTable] 添加策略行失败: {e}")
+            print(f"[GridTable] 错误详情: {traceback.format_exc()}")
+            self.dialog_requested.emit("error", "错误", f"添加策略行失败: {str(e)}")
 
     def _create_operation_buttons(self, row: int, uid: str, status: Dict[str, bool]):
-        """创建操作按钮组"""
         container = QWidget()
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(5)
 
-        # 创建开平仓按钮
         open_button = QPushButton("开")
         close_button = QPushButton("平")
 
-        # 设置按钮状态
         open_button.setCheckable(True)
         close_button.setCheckable(True)
         open_button.setChecked(status.get("开仓", True))
         close_button.setChecked(status.get("平仓", True))
 
-        # 设置按钮样式
         button_style = """
             QPushButton {
                 font-size: 14px;
@@ -342,7 +307,6 @@ class GridTable(QTableWidget):
         open_button.setStyleSheet(button_style)
         close_button.setStyleSheet(button_style)
 
-        # 连接信号
         def create_toggle_handler(operation_type: str):
             def handler(checked: bool):
                 self._handle_operation_toggled(uid, operation_type, checked)
@@ -351,69 +315,42 @@ class GridTable(QTableWidget):
         open_button.toggled.connect(create_toggle_handler("开仓"))
         close_button.toggled.connect(create_toggle_handler("平仓"))
 
-        # 将按钮添加到布局
         layout.addWidget(open_button)
         layout.addWidget(close_button)
-
-        # 设置到表格
         self.setCellWidget(row, self.get_column_index("操作"), container)
 
     def _handle_operation_toggled(self, uid: str, operation_type: str, checked: bool):
-        """处理操作状态切换"""
-        grid_data = self.strategy_wrapper.get_strategy_data(uid)  # 通过StrategyManagerWrapper获取策略数据
+        grid_data = self.strategy_wrapper.get_strategy_data(uid)
         if grid_data:
-            operation = grid_data.row_dict.get("操作", {})
-            operation[operation_type] = checked
-            grid_data.row_dict["操作"] = operation
+            grid_data.operations[operation_type] = checked
             grid_data.data_updated.emit(uid)
 
-    def update(self, grid_data) -> None:
-        """更新所有显示数据"""
-        position_metrics = grid_data.calculate_position_metrics()
-        grid_status = grid_data.get_grid_status()
-        tp_sl_prices = grid_data.calculate_avg_price_tp_sl_prices()
-        
-        # 更新所有可能的数据
-        updates = {
-            # 基础信息
-            GridColumn.PAIR: grid_data.pair,
-            GridColumn.DIRECTION: grid_data.direction.value,
-            GridColumn.STATUS: grid_data.row_dict.get("运行状态", ""),
-            GridColumn.GRID_LEVEL: f"{grid_status['filled_levels']}/{grid_status['total_levels']}",
-            GridColumn.EXCHANGE: grid_data.exchange,
-            GridColumn.UID: grid_data.uid,
-            
-            # 市场数据  
-            GridColumn.LAST_PRICE: str(grid_data.last_price) if grid_data.last_price else "-",
-            GridColumn.LAST_TIME: grid_data.last_update_time.strftime("%H:%M:%S") if grid_data.last_update_time else "-",
-            
-            # 持仓数据
-            GridColumn.AVG_PRICE: str(position_metrics['avg_price']),
-            GridColumn.POS_VALUE: str(position_metrics['total_value']),
-            GridColumn.POS_PNL: str(position_metrics['unrealized_pnl']),
-            GridColumn.REALIZED_PNL: str(grid_data.total_realized_profit),
-            
-            # 触发价格
-            GridColumn.OPEN_TRIGGER: grid_data.row_dict.get("开仓触发价", "-"),
-            GridColumn.TP_TRIGGER: grid_data.row_dict.get("止盈触发价", "-"),
-            
-            # 止盈止损
-            GridColumn.AVG_TP: grid_data.row_dict.get("均价止盈", "-"),
-            GridColumn.AVG_SL: grid_data.row_dict.get("均价止损", "-"),
-            GridColumn.TOTAL_TP: grid_data.row_dict.get("总体止盈", "-"), 
-            GridColumn.TOTAL_SL: grid_data.row_dict.get("总体止损", "-"),
-        }
-        
-        # 更新额外的止盈止损触发价
-        if tp_sl_prices['avg_tp_price']:
-            updates[GridColumn.ATP_TRIGGER] = str(tp_sl_prices['avg_tp_price'])
-        if tp_sl_prices['avg_sl_price']:
-            updates[GridColumn.ASL_TRIGGER] = str(tp_sl_prices['avg_sl_price'])
+    def update_strategy_row(self, uid: str, grid_data: GridData):
+        """更新策略行"""
+        try:
+            row = -1
+            uid_col = GridColumnManager.get_column_index(GridColumn.UID)
+            for i in range(self.rowCount()):
+                uid_item = self.item(i, uid_col)
+                if uid_item and uid_item.text() == uid:
+                    row = i
+                    break
+                    
+            if row == -1:
+                print(f"[GridTable] 未找到策略行: {uid}")
+                return
                 
-        self._data.update(updates)
+            display_model = self.updater._display_models.get(uid)
+            if display_model:
+                display_model.update(grid_data)
+                self.updater.schedule_update(uid)
+                self.updater.commit_updates()
+                
+        except Exception as e:
+            print(f"[GridTable] 更新策略行失败: {e}")
+            print(f"[GridTable] 错误详情: {traceback.format_exc()}")
 
     def show_context_menu(self, position):
-        """显示右键菜单"""
         index = self.indexAt(position)
         if not index.isValid():
             return
@@ -421,68 +358,56 @@ class GridTable(QTableWidget):
         row = index.row()
         uid_item = self.item(row, self.get_column_index("标识符"))
         if not uid_item:
+            print(f"[GridTable] 未找到 UID 单元格: Row={row}")
             return
         uid = uid_item.text()
         
-        # 获取策略状态
         status = self.get_strategy_status(uid)
         if not status:
+            print(f"[GridTable] 未找到状态: UID={uid}")
             return
             
         menu = QMenu(self)
-        
-        # 基础操作
         menu.addAction("设置网格", lambda: self.strategy_setting_requested.emit(uid))
         
-        # 根据策略状态添加启动/停止选项
         if status == "运行中":
             menu.addAction("停止策略", lambda: self.strategy_stop_requested.emit(uid))
         else:
             menu.addAction("启动策略", lambda: self.strategy_start_requested.emit(uid))
 
         menu.addSeparator()
-        
-        # 只有在策略已停止时才允许平仓
         if status != "运行中":
             menu.addAction("平仓", lambda: self._handle_close_strategy(uid))
         
-        # 添加刷新按钮
         menu.addSeparator()
         menu.addAction("刷新数据", lambda: self.strategy_refresh_requested.emit(uid))
 
-        # 删除选项需要确认
         menu.addSeparator()
         menu.addAction("删除", lambda: self._handle_delete_strategy(uid, status))
         
         menu.exec(self.mapToGlobal(position))
 
     def _handle_delete_strategy(self, uid: str, status: str):
-        """处理删除策略请求"""
         try:
-            # 检查运行状态
             if status == "运行中":
                 self.dialog_requested.emit("warning", "警告", "请先停止策略再删除！")
                 return
                 
-            # 获取策略数据
             grid_data = self.strategy_wrapper.get_strategy_data(uid)
             if not grid_data:
                 self.dialog_requested.emit("error", "错误", "策略数据不存在！")
                 return
                 
-            # 检查是否有持仓
-            position_value = grid_data.row_dict.get("持仓价值", "0")
-            if position_value and float(position_value.replace(",", "")) > 0:
+            position_metrics = grid_data.calculate_position_metrics()
+            if position_metrics['total_value'] > 0:
                 self.dialog_requested.emit("warning", "警告", "策略仍有持仓，请先平仓后再删除！")
                 return
                 
-            # 发送删除请求
             self.strategy_delete_requested.emit(uid)
         except Exception as e:
             self.dialog_requested.emit("error", "错误", f"删除策略失败: {str(e)}")
 
     def _handle_close_strategy(self, uid: str):
-        """处理平仓请求"""
         status = self.get_strategy_status(uid)
         if status == "运行中":
             self.dialog_requested.emit("warning", "警告", "请先停止策略再进行平仓！")
@@ -491,7 +416,6 @@ class GridTable(QTableWidget):
         self.strategy_close_requested.emit(uid)
 
     def get_strategy_uids(self) -> List[str]:
-        """获取所有策略ID"""
         uids = []
         for row in range(self.rowCount()):
             uid_item = self.item(row, self.get_column_index("标识符"))
@@ -500,9 +424,7 @@ class GridTable(QTableWidget):
         return uids
 
     def get_column_index(self, column: Union[str, GridColumn]) -> int:
-        """获取列索引"""
         if isinstance(column, str):
-            # 兼容字符串列名 -> 枚举 的转换
             try:
                 column = next(k for k, v in GridColumnManager.COLUMN_CONFIGS.items() 
                             if v.name == column)
@@ -511,18 +433,18 @@ class GridTable(QTableWidget):
         return GridColumnManager.get_column_index(column)
 
     def remove_strategy(self, uid: str):
-        """删除策略行"""
         for row in range(self.rowCount()):
             if self.item(row, self.get_column_index("标识符")).text() == uid:
                 self.removeRow(row)
+                self.updater.unregister_strategy(uid)
                 break
 
     def clear_all(self):
-        """清空表格"""
         self.setRowCount(0)
+        self.updater._display_models.clear()
+        self.updater._pending_updates.clear()
 
     def get_strategy_status(self, uid: str) -> Optional[str]:
-        """获取策略状态"""
         for row in range(self.rowCount()):
             if self.item(row, self.get_column_index("标识符")).text() == uid:
                 status_item = self.item(row, self.get_column_index("运行状态"))
@@ -530,7 +452,6 @@ class GridTable(QTableWidget):
         return None
 
     def update_operation_status(self, uid: str, operation_type: str, enabled: bool):
-        """更新操作状态"""
         for row in range(self.rowCount()):
             if self.item(row, self.get_column_index("标识符")).text() == uid:
                 operation_widget = self.cellWidget(row, self.get_column_index("操作"))
@@ -543,7 +464,6 @@ class GridTable(QTableWidget):
                 break
 
     def set_all_operation_status(self, operation_type: str, enabled: bool):
-        """设置所有策略的操作状态"""
         for row in range(self.rowCount()):
             operation_widget = self.cellWidget(row, self.get_column_index("操作"))
             if operation_widget:
@@ -554,11 +474,9 @@ class GridTable(QTableWidget):
                     button.setChecked(enabled)
 
     def disable_all_operations(self, uid: str):
-        """禁用指定策略的所有操作"""
         self.update_operation_status(uid, "开仓", False)
         self.update_operation_status(uid, "平仓", False)
 
     def enable_all_operations(self, uid: str):
-        """启用指定策略的所有操作"""
         self.update_operation_status(uid, "开仓", True)
         self.update_operation_status(uid, "平仓", True)

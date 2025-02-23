@@ -83,7 +83,7 @@ class BitgetWsClient:
         return self
 
     def has_connect(self):
-        print(f"Checking connection status: {self.__connection}")
+        # print(f"Checking connection status: {self.__connection}")
         return self.__connection
 
     def __init_client(self):
@@ -96,33 +96,35 @@ class BitgetWsClient:
 
         except Exception as ex:
             print(ex)
-
+        
     def __login(self):
         """登录并等待成功"""
+        # 已经登录成功就不再重复登录
+        if self.__connection and self.__login_status:
+            return True
+            
         utils.check_none(self.__api_key, "api key")
         utils.check_none(self.__api_secret_key, "api secret key")
         utils.check_none(self.__passphrase, "passphrase")
+        
         timestamp = int(round(time.time()))
         sign = utils.sign(utils.pre_hash(timestamp, GET, c.REQUEST_PATH), self.__api_secret_key)
         if c.SIGN_TYPE == c.RSA:
             sign = utils.signByRSA(utils.pre_hash(timestamp, GET, c.REQUEST_PATH), self.__api_secret_key)
+            
         ws_login_req = WsLoginReq(self.__api_key, self.__passphrase, str(timestamp), sign)
         self.send_message(WS_OP_LOGIN, [ws_login_req])
+        
         print("logging in......")
         start_time = time.time()
         while not self.__login_status:
-            time.sleep(0.1)  # 缩短等待时间
-            if time.time() - start_time > 5:  # 设置5秒超时
-                print("Login timeout")
-                break
+            time.sleep(0.1)
+            if time.time() - start_time > 5:
+                print("Login timeout") 
+                return False
+                
         print(f"Login status: {self.__login_status}")
         return self.__login_status
-
-    def connect(self):
-        try:
-            self.__ws_client.run_forever(ping_timeout=10)
-        except Exception as ex:
-            print(ex)
 
     def __keep_connected(self, interval):
         try:
@@ -253,19 +255,33 @@ class BitgetWsClient:
         if not self.__reconnect_status:
             self.__re_connect()
 
-    def __re_connect(self):
-        # 重连
-        self.__reconnect_status = True
-        print("start reconnection ...")
-        self.build()
-        for channel in self.__all_suribe :
-            self.subscribe([channel])
-        pass
-
     def __close(self):
         self.__login_status = False
         self.__connection = False
-        self.__ws_client.close()
+        if self.__ws_client:  # 检查是否存在
+            try:
+                self.__ws_client.close()
+            except AttributeError:
+                print("[BitgetWsClient] 关闭失败：WebSocket 对象无效")
+            self.__ws_client = None  # 确保置为 None
+
+    def __re_connect(self):
+        if self.__connection:  # 如果已连接，不重连
+            return
+        self.__reconnect_status = True
+        print("start reconnection ...")
+        time.sleep(1)  # 添加延迟，避免频繁重连
+        self.build()
+        for channel in self.__all_suribe:
+            self.subscribe([channel])
+        self.__reconnect_status = False
+
+    def connect(self):
+        try:
+            self.__ws_client.run_forever(ping_timeout=10)
+        except Exception as ex:
+            print(f"[BitgetWsClient] 连接异常: {ex}")
+            self.__close()  # 确保异常时清理
 
     def __check_sum(self, json_obj):
         # noinspection PyBroadException

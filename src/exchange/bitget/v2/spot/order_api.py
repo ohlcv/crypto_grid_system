@@ -3,7 +3,7 @@ from ...client import Client
 from ...consts import GET, POST
 
 
-class SpotOrderApi(Client):
+class OrderApi(Client):
     """
     现货交易 API，提供订单管理、历史查询等功能。
     """

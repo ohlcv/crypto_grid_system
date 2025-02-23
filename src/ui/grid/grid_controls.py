@@ -7,14 +7,13 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import Qt, Signal, QRegularExpression
 from qtpy.QtGui import QRegularExpressionValidator, QColor
-
 from src.exchange.base_client import InstType
 
 class GridControls(QWidget):
     """网格策略控制组件"""
     
     # 信号定义
-    pair_added = Signal(str, str, object)  # symbol, base, pair_data
+    pair_added = Signal(str, str, object)  # symbol, quote, pair_data
     stop_all_requested = Signal()
     operation_toggled = Signal(str, bool)  # operation_type, enabled
     position_mode_changed = Signal(bool)  # is_long
@@ -38,17 +37,17 @@ class GridControls(QWidget):
         # === 交易对输入区域 ===
         # 交易对输入
         layout.addWidget(QLabel("交易对:"))
-        self.input_symbol = QLineEdit()
-        self.input_symbol.setPlaceholderText("请输入交易对 (如BTC)")
+        self.input_base = QLineEdit()
+        self.input_base.setPlaceholderText("请输入交易对 (如BTC)")
         validator = QRegularExpressionValidator(QRegularExpression("^[A-Za-z0-9]*$"))
-        self.input_symbol.setValidator(validator)
-        layout.addWidget(self.input_symbol)
+        self.input_base.setValidator(validator)
+        layout.addWidget(self.input_base)
 
         # 基础货币
         layout.addWidget(QLabel("基础货币:"))
-        self.input_base = QLineEdit("USDT")
-        self.input_base.setValidator(validator)
-        layout.addWidget(self.input_base)
+        self.input_quote = QLineEdit("USDT")
+        self.input_quote.setValidator(validator)
+        layout.addWidget(self.input_quote)
 
         # 添加按钮
         add_button = QPushButton("添加交易对")
@@ -140,45 +139,36 @@ class GridControls(QWidget):
         # 发送信号通知模式变化
         self.position_mode_changed.emit(not self.position_mode_button.isChecked())
 
-    # @show_error_dialog
     def _handle_add_pair(self):
         """处理添加交易对请求"""
-        symbol = self.input_symbol.text().strip().upper()
         base = self.input_base.text().strip().upper()
+        quote = self.input_quote.text().strip().upper()
         
-        if not symbol or not base:
+        if not base or not quote:
             self.dialog_requested.emit("warning", "错误", "交易对和基础货币不能为空！")
             return
 
         if not self.client:
             self.dialog_requested.emit("warning", "错误", "交易所客户端未连接！")
             return
-            
-        pair = f"{symbol}/{base}"
         
+        pair = f"{base}/{quote}"
+        symbol_normalized = pair.replace('/', '')
+
         try:
-            # 使用rest api验证交易对
-            symbol_normalized = pair.replace('/', '')
-            pair_info = self.client.rest_api.get_pairs(symbol=symbol_normalized)
-            
-            if pair_info.get('code') != '00000':
-                raise ValueError(f"验证交易对失败: {pair_info.get('msg')}")
-                
-            # 验证交易对是否在返回结果中
-            pair_exists = False
-            pair_data = None
-            for p in pair_info.get('data', []):
-                if p['symbol'] == symbol_normalized:
-                    pair_exists = True
-                    pair_data = p
-                    break
-                    
-            if not pair_exists:
+            symbol_configs = self.client.rest_api.get_symbol_config(symbol=symbol_normalized, inst_type=self.inst_type)
+            if not symbol_configs:
+                raise ValueError(f"交易对 {pair} 不存在或查询失败")
+
+            pair_config = next((config for config in symbol_configs if config.symbol == symbol_normalized), None)
+            if not pair_config:
                 raise ValueError(f"交易对 {pair} 不存在")
 
-            # 发送验证参数
-            self.pair_added.emit(symbol, base, pair_data)  # 修改此处,传递pair_data
-            self.input_symbol.clear()
+            if pair_config.pair != pair:
+                raise ValueError(f"基础货币 {quote} 与交易对 {pair} 不匹配")
+
+            self.pair_added.emit(base, quote, pair_config)
+            self.input_base.clear()
             
         except Exception as e:
             self.dialog_requested.emit("error", "错误", f"验证交易对失败: {str(e)}")
@@ -225,16 +215,16 @@ class GridControls(QWidget):
 
     def disable_all_controls(self):
         """禁用所有控制"""
-        self.input_symbol.setEnabled(False)
         self.input_base.setEnabled(False)
+        self.input_quote.setEnabled(False)
         self.position_mode_button.setEnabled(False)
         self.toggle_all_open_button.setEnabled(False)
         self.toggle_all_close_button.setEnabled(False)
 
     def enable_all_controls(self):
         """启用所有控制"""
-        self.input_symbol.setEnabled(True)
         self.input_base.setEnabled(True)
+        self.input_quote.setEnabled(True)
         self.position_mode_button.setEnabled(True)
         self.toggle_all_open_button.setEnabled(True)
         self.toggle_all_close_button.setEnabled(True)

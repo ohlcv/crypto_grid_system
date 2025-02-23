@@ -8,11 +8,9 @@ from typing import List, Optional, Dict, Protocol, Type
 from qtpy.QtCore import QObject, Signal
 
 from src.exchange.bingX.bingx_client import BingXClient
+from src.exchange.bitget.bitget_client.bitget_client import BitgetClient
+from .base_client import BaseClient, InstType, UserAuthority
 
-from .base_client import BaseClient, InstType
-from .bitget.bitget_client import BitgetClient
-from qtpy.QtWidgets import QApplication
-from qtpy.QtCore import QTimer
 
 
 class ClientStatus(Enum):
@@ -34,34 +32,33 @@ class BitgetValidator:
     """Bitget验证器"""
     WHITELIST_UIDS = ["5197445181", "5176387297", "3295149482"]  # 白名单用户ID列表
     ALLOWED_INVITER_IDS = ["5197445181", "5176387297"]  # 允许的邀请者ID列表
-    # WHITELIST_UIDS = []  
-    # ALLOWED_INVITER_IDS = []
-
+    
     def validate_account(self, client: BaseClient) -> bool:
         try:
-            response = client.rest_api.get_account_info()
-            # print(f"[BitgetValidator] 获取账户信息响应: {response}")
-            if response.get('code') == '00000':
-                data = response.get('data', {})
-                user_id = data.get('userId')
-                inviter_id = data.get('inviterId')
-                print(f"[BitgetValidator] userId: {user_id}, inviterId: {inviter_id}")
-                
-                # 检查白名单
-                if user_id in self.WHITELIST_UIDS:
-                    print(f"[BitgetValidator] userId {user_id} 在白名单中，验证成功")
-                    return True
-                    
-                # 检查邀请人
-                if inviter_id in self.ALLOWED_INVITER_IDS:
-                    print(f"[BitgetValidator] inviterId {inviter_id} 在允许列表中，验证成功")
-                    return True
-                
-                print(f"[BitgetValidator] userId 和 inviterId 均未通过验证")
-                return False
-            else:
+            response = client.rest_api.get_info()
+            if response.get('code') != '00000':
                 print(f"[BitgetValidator] 响应码不为 '00000'，验证失败")
                 return False
+            
+            # 获取用户信息
+            user_info = response.get('data')
+            if not isinstance(user_info, UserAuthority):
+                print(f"[BitgetValidator] 返回数据格式错误")
+                return False
+                
+            # 检查白名单
+            if user_info.user_id in self.WHITELIST_UIDS:
+                print(f"[BitgetValidator] userId {user_info.user_id} 在白名单中，验证成功")
+                return True
+                
+            # 检查邀请人
+            if user_info.inviter_id in self.ALLOWED_INVITER_IDS:
+                print(f"[BitgetValidator] inviterId {user_info.inviter_id} 在允许列表中，验证成功")
+                return True
+            
+            print(f"[BitgetValidator] userId 和 inviterId 均未通过验证")
+            return False
+            
         except Exception as e:
             print(f"[BitgetValidator] 验证过程中发生异常: {e}")
             return False
@@ -77,7 +74,7 @@ class BingXValidator:
                 return False
 
             # 然后验证API权限
-            response = client.rest_api.get_account_info()
+            response = client.rest_api.get_info()
             if response and isinstance(response, dict):
                 print("[BingXValidator] API验证成功")
                 return True
@@ -125,17 +122,17 @@ class ExchangeValidatorRegistry:
             "bingx": BingXClient
         }
     
-    def get_validator(self, exchange: str) -> Optional[ExchangeValidator]:
+    def get_validator(self, exchange_str: str) -> Optional[ExchangeValidator]:
         """获取交易所验证器"""
-        return self._validators.get(exchange.lower())
+        return self._validators.get(exchange_str.lower())
 
-    def get_client_class(self, exchange: str) -> Optional[Type[BaseClient]]:
+    def get_client_class(self, exchange_str: str) -> Optional[Type[BaseClient]]:
         """获取交易所客户端类"""
-        return self._client_classes.get(exchange.lower())
+        return self._client_classes.get(exchange_str.lower())
 
-    def get_supported_types(self, exchange: str) -> Dict[InstType, bool]:
+    def get_supported_types(self, exchange_str: str) -> Dict[InstType, bool]:
         """获取交易所支持的交易类型"""
-        return self._exchange_support.get(exchange.lower(), {})
+        return self._exchange_support.get(exchange_str.lower(), {})
 
     def get_all_exchanges(self) -> List[str]:
         """获取所有注册的交易所"""
@@ -165,64 +162,68 @@ class ExchangeClientFactory(QObject):
         self._lock = threading.Lock()
         self.registry = ExchangeValidatorRegistry()
 
-    def create_client(self, tab_id: str, exchange: str, api_config: dict, inst_type: InstType) -> Optional[BaseClient]:
+    def _handle_client_connected(self, tab_id: str, inst_type: InstType, connected: bool):
+        """处理客户端连接状态变化"""
+        print(f"\n[ExchangeClientFactory] === 处理客户端连接状态变化 ===")
+        print(f"  Tab ID: {tab_id}")
+        print(f"  类型: {inst_type.name}")
+        print(f"  状态: {'已连接' if connected else '未连接'}")
+        
+        if not connected:
+            if tab_id in self._client_status and inst_type in self._client_status[tab_id]:
+                self._client_status[tab_id][inst_type] = ClientStatus.DISCONNECTED
+                self.client_status_changed.emit(tab_id, ClientStatus.DISCONNECTED.value)
+
+    def create_client(self, tab_id: str, exchange_str: str, api_config: dict, inst_type: InstType) -> Optional[BaseClient]:
         try:
-            with self._lock:
-                # 从注册中心获取配置
-                supported = self.registry.get_supported_types(exchange)
-                if inst_type not in supported or not supported[inst_type]:
-                    raise ValueError(f"{exchange}不支持{inst_type.value}")
+            # 从注册中心获取配置
+            supported = self.registry.get_supported_types(exchange_str)
+            if inst_type not in supported or not supported[inst_type]:
+                raise ValueError(f"{exchange_str}不支持{inst_type.value}")
 
-                client_class = self.registry.get_client_class(exchange)
-                if not client_class:
-                    raise ValueError(f"Unsupported exchange: {exchange}")
+            client_class = self.registry.get_client_class(exchange_str)
+            if not client_class:
+                raise ValueError(f"Unsupported exchange: {exchange_str}")
 
-                # 初始化tab_id的存储结构(如果不存在)
-                if tab_id not in self._clients:
-                    self._clients[tab_id] = {}
-                    self._client_threads[tab_id] = {}
-                    self._client_status[tab_id] = {}
+            # 初始化tab_id的存储结构(如果不存在)
+            if tab_id not in self._clients:
+                self._clients[tab_id] = {}
+                self._client_threads[tab_id] = {}
+                self._client_status[tab_id] = {}
 
-                # 如果已存在相同类型的客户端，先销毁它
-                if inst_type in self._clients[tab_id]:
-                    self.destroy_client(tab_id, inst_type)
-                
-                # 创建客户端
-                client = client_class(
-                    api_key=api_config.get('api_key', ''),
-                    api_secret=api_config.get('api_secret', ''),
-                    passphrase=api_config.get('passphrase', ''),
-                    inst_type=inst_type
-                )
-                
-                # 设置初始状态
-                self._clients[tab_id][inst_type] = client
-                self._client_status[tab_id][inst_type] = ClientStatus.INITIALIZING
-                self.client_status_changed.emit(tab_id, ClientStatus.INITIALIZING.value)
-                
-                # 连接客户端信号
-                client.connection_status.connect(
-                    lambda connected: self._handle_client_connected(tab_id, inst_type, connected)
-                )
-                
-                # 添加 WebSocket 状态变化信号连接
-                if hasattr(client, 'ws_status_changed'):
-                    print(f"[ExchangeClientFactory] 连接WebSocket状态信号 - tab_id: {tab_id}")
-                    client.ws_status_changed.connect(
-                        lambda is_public, connected, tid=tab_id: self._forward_ws_status_to_ui(tid, is_public, connected)
-                    )
+            # 如果已存在相同类型的客户端，先销毁它
+            if inst_type in self._clients[tab_id]:
+                self.destroy_client(tab_id, inst_type)
+            
+            # 创建客户端
+            client = client_class(
+                api_key=api_config.get('api_key', ''),
+                api_secret=api_config.get('api_secret', ''),
+                passphrase=api_config.get('passphrase', ''),
+                inst_type=inst_type
+            )
+            
+            # 设置初始状态
+            self._clients[tab_id][inst_type] = client
+            self._client_status[tab_id][inst_type] = ClientStatus.INITIALIZING
+            self.client_status_changed.emit(tab_id, ClientStatus.INITIALIZING.value)
+            
+            # 连接客户端信号
+            client.connection_status.connect(
+                lambda connected: self._handle_client_connected(tab_id, inst_type, connected)
+            )
 
-                # 启动连接线程
-                thread = threading.Thread(
-                    target=self._run_client,
-                    args=(client, tab_id, inst_type),
-                    name=f"Exchange-{exchange}-{tab_id}-{inst_type.value}",
-                    daemon=True
-                )
-                self._client_threads[tab_id][inst_type] = thread
-                thread.start()
-                
-                return client
+            # 启动连接线程
+            thread = threading.Thread(
+                target=self._run_client,
+                args=(client, tab_id, inst_type),
+                name=f"Exchange-{exchange_str}-{tab_id}-{inst_type.value}",
+                daemon=True
+            )
+            self._client_threads[tab_id][inst_type] = thread
+            thread.start()
+            
+            return client
                 
         except Exception as e:
             self.client_error.emit(f"创建客户端失败: {str(e)}")
@@ -305,13 +306,6 @@ class ExchangeClientFactory(QObject):
         if tab_id in self._validation_status:
             del self._validation_status[tab_id]
 
-    def _handle_client_connected(self, tab_id: str, inst_type: InstType, connected: bool):
-        """处理客户端连接状态变化"""
-        if not connected:
-            if tab_id in self._client_status and inst_type in self._client_status[tab_id]:
-                self._client_status[tab_id][inst_type] = ClientStatus.DISCONNECTED
-                self.client_status_changed.emit(tab_id, ClientStatus.DISCONNECTED.value)
-
     def get_client(self, tab_id: str, inst_type: Optional[InstType] = None) -> Optional[BaseClient]:
         """获取客户端实例"""
         with self._lock:
@@ -349,7 +343,7 @@ class ExchangeClientFactory(QObject):
                 self._client_status[tab_id][inst_type] = ClientStatus.VALIDATING
                 self.client_status_changed.emit(tab_id, ClientStatus.VALIDATING.value)
                 
-            validator = self.registry.get_validator(client.exchange)
+            validator = self.registry.get_validator(client.exchange_str)
             if validator:
                 print(f"[ExchangeClientFactory] 开始验证 {client.inst_type.name} 账户")
                 if not validator.validate_account(client):
@@ -383,12 +377,14 @@ class ExchangeClientFactory(QObject):
 
     def _forward_ws_status_to_ui(self, tab_id: str, is_public: bool, connected: bool):
         """转发 WebSocket 状态到 UI"""
-        # print(f"[ExchangeClientFactory] 转发WebSocket状态 - tab_id: {tab_id}, {'公有' if is_public else '私有'}: {'已连接' if connected else '未连接'}")
-        
-        # 获取特定的客户端
-        client = self._clients.get(tab_id)
-        if client and hasattr(client, 'api_manager'):
-            client.api_manager.update_ws_status(is_public, connected)
+        # 获取特定tab的客户端
+        if tab_id not in self._clients:
+            return
+            
+        # 遍历该tab下的所有客户端并更新状态
+        for client in self._clients[tab_id].values():
+            if hasattr(client, 'ws_status_changed'):
+                client.ws_status_changed.emit(is_public, connected)
 
     def _update_status(self, tab_id: str, status: ClientStatus):
         """更新客户端状态"""

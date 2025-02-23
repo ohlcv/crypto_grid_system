@@ -11,7 +11,7 @@ class MarketApi(Client):
         return self._request_with_params(GET, '/api/v2/spot/market/coins', params)
 
     def symbols(self, params):
-        return self._request_with_params(GET, '/api/v2/spot/market/symbols', params)
+        return self._request_with_params(GET, '/api/v2/spot/public/symbols', params)
 
     def fills(self, params):
         return self._request_with_params(GET, '/api/v2/spot/market/fills', params)

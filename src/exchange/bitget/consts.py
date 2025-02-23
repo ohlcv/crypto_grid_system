@@ -1,8 +1,8 @@
 # Base Url
 API_URL = 'https://api.bitget.com'
 CONTRACT_WS_URL = 'wss://ws.bitget.com/mix/v1/stream'
-PublicWsUrl  = "wss://ws.bitget.com/v2/ws/public"
-PrivateWsUrl = "wss://ws.bitget.com/v2/ws/private"
+PUBLIC_WS_URL  = "wss://ws.bitget.com/v2/ws/public"
+PRIVATE_WS_URL = "wss://ws.bitget.com/v2/ws/private"
 
 # http header
 CONTENT_TYPE = 'Content-Type'

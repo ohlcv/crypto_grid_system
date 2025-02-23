@@ -7,7 +7,7 @@ import threading
 from datetime import datetime
 from qtpy.QtCore import QObject, Signal
 
-from src.exchange.base_client import BaseClient, InstType, PositionSide
+from src.exchange.base_client import BaseClient, InstType, PositionSide, SymbolConfig, TickerData
 from src.utils.common.tools import find_value
 from .grid_core import GridData
 from .grid_trader import GridTrader
@@ -27,9 +27,9 @@ class GridStrategyManager(QObject):
         self._data: Dict[str, GridData] = {}  # uid -> GridData
         self._lock = threading.Lock()
 
-    def create_strategy(self, uid: str, pair: str, exchange: str, inst_type: InstType, is_long: bool = True) -> Optional[GridData]:
+    def create_strategy(self, uid: str, symbol_config: SymbolConfig, exchange: str, inst_type: InstType, is_long: bool = True) -> Optional[GridData]:
         print(f"\n[GridStrategyManager] {inst_type} === 创建新策略 === {uid}")
-        print(f"[GridStrategyManager] 交易对: {pair}")
+        print(f"[GridStrategyManager] 交易对: {symbol_config.pair}")
         
         with self._lock:
             if uid in self._data:
@@ -38,10 +38,10 @@ class GridStrategyManager(QObject):
 
         try:
             print(f"[GridStrategyManager] 初始化策略数据...")
-            grid_data = GridData(uid, pair, exchange, inst_type)
+            grid_data = GridData(uid, symbol_config, exchange, inst_type)
             
             grid_data.set_direction(is_long=(inst_type == InstType.SPOT or is_long))
-            grid_data.row_dict["方向"] = PositionSide.LONG.name if is_long else PositionSide.SHORT.name
+            direction_str = PositionSide.LONG.name if grid_data.is_long() else PositionSide.SHORT.name
             
             print(f"[GridStrategyManager] 创建策略实例...")
             self._data[uid] = grid_data
@@ -56,7 +56,7 @@ class GridStrategyManager(QObject):
             if uid in self._data:
                 del self._data[uid]
             return None
-
+        
     def stop_strategy(self, uid: str) -> bool:
         print(f"\n[GridStrategyManager] === 暂停策略运行 === {uid}")
         try:
@@ -145,43 +145,35 @@ class GridStrategyManager(QObject):
             return False
 
     def start_strategy(self, uid: str, exchange_client: BaseClient) -> bool:
-        """启动策略运行"""
         print(f"\n[GridStrategyManager] === 启动策略运行 === {uid}")
         
         try:
-            # 获取grid_data
             grid_data = self._data.get(uid)
             if not grid_data:
                 print(f"[GridStrategyManager] 未找到策略数据: {uid}")
                 return False
                 
-            # 获取或创建trader
             trader = self._strategies.get(uid)
             if trader and trader._running:
                 print(f"[GridStrategyManager] 策略已在运行中")
                 return False
 
-            # 如果不存在trader或trader已停止，创建新的trader
             if not trader:
                 print(f"[GridStrategyManager] 创建新的trader实例...")
                 trader = GridTrader(grid_data)
-                trader.error_occurred.connect(self._handle_strategy_error)  # 连接错误信号
+                trader.error_occurred.connect(self._handle_strategy_error)
                 self._strategies[uid] = trader
             
-            # 设置exchange_client
             print(f"[GridStrategyManager] 设置交易所客户端...")
             trader.set_client(exchange_client)
             
-            # 确保实现盈亏值正确设置
             original_profit = grid_data.total_realized_profit
             print(f"[GridStrategyManager] 保持原有实现盈亏: {original_profit}")
             
-            # 启动策略（参数检查和缓存由 GridTrader.start 处理）
             if trader.start():
                 self.strategy_started.emit(uid)
                 grid_data.total_realized_profit = original_profit
-                grid_data.row_dict["实现盈亏"] = str(original_profit)
-                grid_data.row_dict["运行状态"] = "运行中"
+                grid_data.status = "运行中"
                 grid_data.data_updated.emit(uid)
                 print(f"[GridStrategyManager] 策略启动完成: {uid}")
                 return True
@@ -196,73 +188,43 @@ class GridStrategyManager(QObject):
             return False
 
     def process_market_data(self, pair: str, data: dict):
-        """处理市场数据"""
+        """处理市场数据，使用 TickerData"""
         try:
-            # 确保数据格式正确
             if not isinstance(data, dict):
                 print(f"[GridStrategyManager] 无效的市场数据格式: {data}")
                 return
 
             normalized_pair = pair.replace('/', '')
-            
-            # 获取所有运行中的策略ID
             running_strategies = set(self._strategies.keys())
             if not running_strategies:
-                return  # 没有运行中的策略，直接返回
+                return
 
-            # 找到相关策略
             affected_strategies = []
             for uid, grid_data in self._data.items():
-                # 只处理运行中的策略
                 if uid not in running_strategies:
                     continue
-
-                grid_pair = grid_data.pair.replace('/', '')
+                grid_pair = grid_data.symbol_config.pair.replace('/', '')
                 if grid_pair == normalized_pair:
                     affected_strategies.append(uid)
 
-            if affected_strategies:  # 只在找到相关策略时打印
-                pass
-                # print(f"\n[GridStrategyManager] === 处理市场数据 === {normalized_pair}")
-                # print(f"[GridStrategyManager] 原始数据: {data}")
-                # print(f"[GridStrategyManager] 行情交易对: {normalized_pair} 找到相关策略: {affected_strategies}")
-
-            # 只有匹配的交易对且策略在运行时才处理
-            for uid in affected_strategies:
-                try:
-                    grid_data = self._data[uid]
-                    trader = self._strategies.get(uid)
-                    
-                    if not grid_data or not trader or not trader._running:
-                        continue
-
-                    # 检查操作状态
-                    operation_status = grid_data.row_dict.get("操作", {})
-                    if not operation_status.get("开仓", True) and not operation_status.get("平仓", True):
-                        continue
-
-                    # 检查数据完整性
-                    price_str = find_value(data, "lastPr")
-                    timestamp = find_value(data, "ts")
-                    if not price_str or not timestamp:
-                        continue
-
-                    # 更新策略数据
-                    # print(f"\n[GridStrategyManager] === 准备更新策略数据 === {uid}")
-                    # print(f"[GridStrategyManager] 当前价格: {price_str}")
-                    # print(f"[GridStrategyManager] 当前时间戳: {timestamp}")
-                    # print(f"[GridStrategyManager] 操作状态: {operation_status}")
-                    # print(f"[GridStrategyManager] 开始更新市场数据...")
-                    
-                    grid_data.update_market_data(data)
-                    
-                    # print(f"[GridStrategyManager] 市场数据更新完成")
-                    # print(f"[GridStrategyManager] 更新后的row_dict: {grid_data.row_dict}")
-
-                except Exception as e:
-                    print(f"[GridStrategyManager] 更新策略 {uid} 失败: {e}")
-                    print(f"[GridStrategyManager] 错误详情: {traceback.format_exc()}")
-                    self._handle_strategy_error(uid, f"策略数据更新错误: {str(e)}")
+            if affected_strategies:
+                ticker = TickerData(
+                    instId=normalized_pair,
+                    lastPr=Decimal(str(find_value(data, "lastPr") or '0')),
+                    ts=int(find_value(data, "ts") or 0)
+                )
+                for uid in affected_strategies:
+                    try:
+                        grid_data = self._data[uid]
+                        trader = self._strategies.get(uid)
+                        if not grid_data or not trader or not trader._running:
+                            continue
+                        if not grid_data.operations.get("开仓", True) and not grid_data.operations.get("平仓", True):
+                            continue
+                        grid_data.update_market_data(ticker)
+                    except Exception as e:
+                        print(f"[GridStrategyManager] 更新策略 {uid} 失败: {e}")
+                        self._handle_strategy_error(uid, f"策略数据更新错误: {str(e)}")
 
         except Exception as e:
             print(f"[GridStrategyManager] 处理市场数据错误: {e}")
@@ -287,10 +249,10 @@ class GridStrategyManager(QObject):
         print(f"[GridStrategyManager] 错误信息: {error_msg}")
         with self._lock:
             if uid in self._data:
-                self._data[uid].row_dict["运行状态"] = "错误停止"
+                self._data[uid].status = "错误停止"
             if uid in self._strategies:
                 trader = self._strategies[uid]
-                trader.stop()  # 停止策略
+                trader.stop()
                 del self._strategies[uid]
             self.strategy_error.emit(uid, error_msg)
 

@@ -1,5 +1,49 @@
 {
     "inst_type": "spot",
-    "strategies": {},
+    "strategies": {
+        "dbdde70a": {
+            "uid": "dbdde70a",
+            "symbol_config": {
+                "symbol": "TRUMPUSDT",
+                "pair": "TRUMP/USDT",
+                "base_coin": "TRUMP",
+                "quote_coin": "USDT",
+                "base_precision": 2,
+                "quote_precision": 5,
+                "price_precision": 3,
+                "min_base_amount": "0",
+                "min_quote_amount": "1"
+            },
+            "exchange": "bitget",
+            "inst_type": "spot",
+            "direction": "long",
+            "ticker_data": null,
+            "total_realized_profit": "0",
+            "status": "已保存",
+            "operations": {
+                "开仓": true,
+                "平仓": true
+            },
+            "grid_levels": {},
+            "open_trigger_price": null,
+            "tp_trigger_price": null,
+            "take_profit_config": {
+                "enabled": false,
+                "profit_amount": null
+            },
+            "stop_loss_config": {
+                "enabled": false,
+                "loss_amount": null
+            },
+            "avg_price_take_profit_config": {
+                "enabled": false,
+                "profit_percent": null
+            },
+            "avg_price_stop_loss_config": {
+                "enabled": false,
+                "loss_percent": null
+            }
+        }
+    },
     "running_strategies": []
 }

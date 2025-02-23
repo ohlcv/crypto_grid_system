@@ -36,7 +36,7 @@ class BingXClient(BaseClient):
         self._passphrase = passphrase
         self._connected = False
         self._lock = threading.Lock()
-        self.exchange = "bingx"
+        self.exchange_str = "bingx"
 
         # 初始化REST API客户端
         self.rest_api = BingXRestAPI(
@@ -47,8 +47,8 @@ class BingXClient(BaseClient):
         )
 
         # 初始化WebSocket客户端
-        self._public_ws = BingXWebSocketClient(is_private=False)
-        self._private_ws = BingXWebSocketClient(
+        self.public_ws = BingXWebSocketClient(is_private=False)
+        self.private_ws = BingXWebSocketClient(
             is_private=True,
             api_key=api_key,
             api_secret=api_secret,
@@ -61,23 +61,23 @@ class BingXClient(BaseClient):
     def _connect_ws_signals(self):
         """连接WebSocket信号"""
         # 公共WebSocket信号
-        self._public_ws.message_received.connect(self._handle_public_message)
-        self._public_ws.error.connect(lambda e: self._handle_error("ws_public", e))
-        self._public_ws.connected.connect(self._handle_public_connected)
-        self._public_ws.disconnected.connect(self._handle_public_disconnected)
+        self.public_ws.message_received.connect(self._handle_public_message)
+        self.public_ws.error.connect(lambda e: self._handle_error("ws_public", e))
+        self.public_ws.connected.connect(self._handle_public_connected)
+        self.public_ws.disconnected.connect(self._handle_public_disconnected)
 
         # 私有WebSocket信号
-        self._private_ws.message_received.connect(self._handle_private_message)
-        self._private_ws.error.connect(lambda e: self._handle_error("ws_private", e))
-        self._private_ws.connected.connect(self._handle_private_connected)
-        self._private_ws.disconnected.connect(self._handle_private_disconnected)
+        self.private_ws.message_received.connect(self._handle_private_message)
+        self.private_ws.error.connect(lambda e: self._handle_error("ws_private", e))
+        self.private_ws.connected.connect(self._handle_private_connected)
+        self.private_ws.disconnected.connect(self._handle_private_disconnected)
 
     def connect(self) -> bool:
         """建立连接"""
         try:
             # 启动WebSocket连接
-            self._public_ws.connect()
-            self._private_ws.connect()
+            self.public_ws.connect()
+            self.private_ws.connect()
             return True
         except Exception as e:
             self.logger.error(f"连接失败: {e}")
@@ -87,8 +87,8 @@ class BingXClient(BaseClient):
     def disconnect(self) -> bool:
         """断开连接"""
         try:
-            self._public_ws.disconnect()
-            self._private_ws.disconnect()
+            self.public_ws.disconnect()
+            self.private_ws.disconnect()
             self._connected = False
             return True
         except Exception as e:
@@ -98,8 +98,8 @@ class BingXClient(BaseClient):
     def get_ws_status(self) -> Dict[str, bool]:
         """获取WebSocket连接状态"""
         return {
-            "public": self._public_ws.is_connected,
-            "private": self._private_ws.is_connected
+            "public": self.public_ws.is_connected,
+            "private": self.private_ws.is_connected
         }
 
     def subscribe_pair(self, pair: str, channels: List[str], strategy_uid: str) -> bool:
@@ -116,7 +116,7 @@ class BingXClient(BaseClient):
         try:
             pair = pair.replace('/', '')
             for channel in channels:
-                self._public_ws.subscribe(channel, pair)
+                self.public_ws.subscribe(channel, pair)
             return True
         except Exception as e:
             self.logger.error(f"订阅失败: {e}")
@@ -136,7 +136,7 @@ class BingXClient(BaseClient):
         try:
             pair = pair.replace('/', '')
             for channel in channels:
-                self._public_ws.unsubscribe(channel, pair)
+                self.public_ws.unsubscribe(channel, pair)
             return True
         except Exception as e:
             self.logger.error(f"取消订阅失败: {e}")

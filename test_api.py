@@ -21,7 +21,7 @@ if __name__ == "__main__":
     # 平仓操作
     # future.close_positions(symbol="DOGEUSDT", hold_side="long")
 
-    response = future.get_account_info()
+    response = future.get_info()
     if response.get('code') == '00000' or response.get('msg') == 'success':
         # 从返回的data中提取需要的信息
         user_id = response['data'].get('userId')

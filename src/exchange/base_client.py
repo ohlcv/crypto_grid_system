@@ -1,252 +1,327 @@
-# src/exchange/base/base_client.py
-
-from abc import abstractmethod
-from typing import Dict, List, Optional, Union
-from decimal import Decimal
+# src/exchange/base_client.py
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from decimal import Decimal
+from typing import Any, Dict, List, Optional, Set
 from enum import Enum
 from qtpy.QtCore import QObject, Signal
 
-# 保持现有枚举定义不变
 class InstType(Enum):
-    """交易所类型"""
     SPOT = "spot"
     FUTURES = "futures"
 
+class TradeScope(Enum):
+    """交易角色"""
+    TAKER = "taker"
+    MAKER = "maker"
+
 class OrderType(Enum):
-    """订单类型"""
     MARKET = "market"
     LIMIT = "limit"
 
 class OrderSide(Enum):
-    """订单方向"""
     BUY = "buy"
     SELL = "sell"
 
 class TradeSide(Enum):
-    """交易方向"""
     OPEN = "open"
     CLOSE = "close"
 
 class PositionSide(Enum):
-    """持仓方向"""
-    LONG = "long"   # 多头
-    SHORT = "short" # 空头
+    LONG = "long"
+    SHORT = "short"
+
+class OrderSourceType(Enum):
+    """订单来源类型"""
+    WEB = "web"           # Web端创建
+    API = "api"           # API端创建
+    SYS = "sys"           # 系统托管订单
+    IOS = "ios"           # iOS端创建
+    ANDROID = "android"   # Android端创建
 
 @dataclass
-class WSRequest:
-    """WebSocket请求数据结构"""
-    channel: str            # 频道名称
-    pair: str               # 交易对
-    inst_type: str          # 产品类型: SPOT/USDT-FUTURES
-    other_params: Dict = field(default_factory=dict)  # 其他参数
+class TickerData:
+    """Ticker频道的行情数据"""
+    instId: str                  # 产品ID
+    lastPr: Decimal              # 最新成交价格 
+    open24h: Decimal = Decimal(0)    # 24小时开盘价
+    high24h: Decimal = Decimal(0)    # 24小时最高价格
+    low24h: Decimal = Decimal(0)     # 24小时最低价格
+    change24h: Decimal = Decimal(0)  # 24小时价格变动
+    bidPr: Decimal = Decimal(0)      # 买一价
+    askPr: Decimal = Decimal(0)      # 卖一价  
+    bidSz: Decimal = Decimal(0)      # 买一量
+    askSz: Decimal = Decimal(0)      # 卖一量
+    baseVolume: Decimal = Decimal(0) # 基础币种成交量,以张为单位
+    quoteVolume: Decimal = Decimal(0)  # 计价币种成交量
+    openUtc: Decimal = Decimal(0)    # UTC 0 时开盘价格
+    changeUtc24h: Decimal = Decimal(0)  # 伦敦时间开盘价格
+    ts: int = 0                  # 数据生成时间,单位:毫秒
+
+@dataclass
+class SymbolConfig:
+    """通用交易对参数配置"""
+    symbol: str                    # 交易对名称，如 "BTCUSDT"
+    pair: str                      # 交易对表示，如 "BTC/USDT"
+    base_coin: str                 # 基础货币，如 "BTC"
+    quote_coin: str                # 计价货币，如 "USDT"
+    base_precision: int            # 基础货币数量小数位
+    quote_precision: int           # 计价货币数量小数位
+    price_precision: int           # 价格小数位
+    min_base_amount: Decimal       # 最小基础货币开单数量
+    min_quote_amount: Decimal      # 最小计价货币开单数量
+    max_leverage: Optional[int] = None  # 最大杠杆倍数（合约适用）
+    inst_type: Optional[InstType] = None  # 产品类型（现货/合约）
+    status: Optional[str] = None        # 交易对状态
+    extra_params: dict = field(default_factory=dict)  # 其他特定参数
+
+@dataclass
+class TickerResponse:
+    """Ticker频道推送数据的包装类"""
+    action: str               # 消息类型,如"snapshot"
+    arg: dict                 # 请求参数
+    data: List[TickerData]    # ticker数据列表
+    ts: int = 0               # 推送时间戳
+
+@dataclass
+class UserAuthority:
+    """用户权限数据"""
+    user_id: str
+    inviter_id: str
+    authorities: Set[str]
+    parent_id: int
+    trader_type: str
+    channel_code: str
+    channel: str
+    regis_time: int
+    ips: Optional[str] = None
+
+@dataclass
+class AssetBalance:
+    """资产余额数据"""
+    coin: str
+    available: Decimal
+    frozen: Decimal
+    locked: Decimal
+    limit_available: Decimal
+    update_time: int
+
+@dataclass 
+class Position:
+    """持仓数据结构"""
+    symbol: str                    # 交易对
+    position_side: PositionSide    # 持仓方向
+    amount: Decimal               # 持仓数量
+    entry_price: Decimal          # 开仓均价
+    mark_price: Decimal           # 标记价格
+    unrealized_pnl: Decimal       # 未实现盈亏
+    margin: Optional[Decimal]     # 保证金
+    leverage: Optional[int]       # 杠杆倍数
+
+@dataclass
+class OrderResponse:
+    """通用订单响应"""
+    status: str  # 请求状态，如 "success" 或 "failed"
+    success: bool  # 是否成功请求
+    function_name: Optional[str] = None  # 新增字段：调用该响应的函数名
+    error_message: Optional[str] = None  # 错误信息
+    code: Optional[str] = None  # 错误代码（如 Bitget 的 "00000" 表示成功）
+    msg: Optional[str] = None  # 错误消息（兼容不同交易所的字段名）
+    order_id: Optional[str] = None  # 订单ID
+    client_order_id: Optional[str] = None  # 客户端订单ID
+    create_time: Optional[int] = None  # 创建时间戳
+    request_time: Optional[int] = None  # 请求发送时间戳
+    response_time: Optional[int] = None  # 响应接收时间戳
+    api_endpoint: Optional[str] = None  # 请求的接口
+    data: Optional[Dict[str, Any]] = None  # 额外数据（如成交明细）
 
 @dataclass
 class OrderRequest:
-    """统一的订单请求格式"""
-    symbol: str                    # 交易对
-    inst_type: InstType            # 新增：交易所类型（现货或合约）
-    position_side: PositionSide    # 持仓方向（必填，但可由交易所客户端根据 inst_type 处理）
-    side: OrderSide                # 买卖方向
-    trade_side: TradeSide          # 开平方向
-    order_type: OrderType          # 订单类型
-    volume: Decimal                # 数量（base amount 或 quote amount，视情况而定）
-    price: Optional[Decimal] = None  # 价格（限价单使用）
-    client_order_id: Optional[str] = None  # 客户端订单ID
-    quote_amount: Optional[Decimal] = None  # USDT 数量（现货市价买单使用）
-    base_price: Optional[Decimal] = None    # 基础货币价格（用于计算 size）
-    
-    # 合约专用字段
-    product_type: Optional[str] = None     # 产品类型
-    margin_mode: Optional[str] = None      # 保证金模式
-    margin_coin: Optional[str] = None      # 保证金币种
-
-# OrderResponse 和其他类保持不变
-@dataclass
-class OrderResponse:
-    """订单响应"""
-    status: str                    # success/failed
-    error_message: Optional[str]   # 错误信息
-    order_id: str                  # 订单ID
-    side: OrderSide               # 买卖方向
-    trade_side: TradeSide         # 交易方向（开仓/平仓）
-    filled_amount: Decimal = Decimal('0')  # 成交数量
-    filled_price: Decimal = Decimal('0')   # 成交均价
-    filled_value: Decimal = Decimal('0')   # 成交金额
-    fee: Decimal = Decimal('0')            # 手续费
-    open_time: Optional[int] = None        # 开仓时间戳
-    profit: Optional[Decimal] = None       # 平仓盈亏
-    open_price: Optional[Decimal] = None   # 开仓价格
-    close_time: Optional[int] = None       # 平仓时间戳
+    """通用下单请求参数"""
+    symbol: str  # 交易对，如 "BTCUSDT"
+    inst_type: InstType = None
+    pair: Optional[str] = None  # 交易对的另一种表示，如 "BTC/USDT"
+    base_coin: Optional[str] = None  # 基础货币，如 "BTC"
+    quote_coin: Optional[str] = None  # 报价货币，如 "USDT"
+    side: OrderSide = None  # 买卖方向 (buy/sell)
+    trade_side: Optional[TradeSide] = None  # 交易方向（open/close）
+    position_side: PositionSide = PositionSide.LONG  # 持仓方向（long/short）
+    order_type: OrderType = OrderType.MARKET  # 订单类型
+    base_size: Optional[Decimal] = None  # 基础货币数量（如 BTC 数量）
+    quote_size: Optional[Decimal] = None  # 报价货币数量（如 USDT 数量）
+    price: Optional[Decimal] = None  # 下单价格（限价单必填，可用于计算仓位）
+    client_order_id: Optional[str] = None  # 客户端自定义订单ID
+    time_in_force: Optional[str] = None  # 订单有效期（如 "gtc", "ioc"）
+    reduce_only: Optional[bool] = False  # 是否只减仓
+    leverage: Optional[int] = None  # 杠杆倍数（合约）
+    margin_mode: Optional[str] = None  # 保证金模式（如 "isolated" 或 "crossed"）
+    extra_params: Dict[str, Any] = field(default_factory=dict)  # 交易所特定参数
 
 @dataclass
 class FillResponse:
     """成交明细响应"""
-    trade_id: str                 # 成交ID
-    order_id: str                 # 订单ID
-    symbol: str                   # 交易对
-    side: OrderSide              # 买卖方向
-    trade_side: TradeSide        # 开平方向
-    filled_time: int             # 成交时间戳
-    filled_amount: Decimal       # 成交数量
-    filled_price: Decimal        # 成交价格
-    filled_value: Decimal        # 成交金额
-    fee: Decimal                 # 手续费
-    fee_currency: str            # 手续费币种
-    profit: Optional[Decimal] = None       # 平仓盈亏
-    position_side: Optional[str] = None    # 持仓方向
+    symbol: str  # 交易对（如 "BTCUSDT"）
+    trade_time: int  # 成交时间戳
+    position_side: PositionSide  # 持仓方向（long/short）
+    trade_side: Optional[TradeSide]  # 交易方向（open/close）
+    filled_price: Decimal  # 成交价格
+    filled_base_amount: Decimal  # 成交基础货币数量
+    filled_quote_value: Decimal  # 成交报价货币金额
+    trade_id: str = None  # 成交ID
+    order_id: str = None  # 订单ID
     client_order_id: Optional[str] = None  # 客户端订单ID
-    error_message: Optional[str] = None    # 错误信息
+    pair: Optional[str] = None  # 交易对表示（如 "BTC/USDT"）
+    base_coin: Optional[str] = None  # 基础货币
+    quote_coin: Optional[str] = None  # 报价货币
+    order_type: OrderType = OrderType.MARKET  # 订单类型（taker/maker）
+    trade_scope: Optional[str] = None  # 成交类型（taker/maker）
+    fee: Decimal = None  # 手续费
+    fee_currency: str = None  # 手续费币种
+    source: Optional[str] = None  # 订单来源
+    profit: Optional[Decimal] = None  # 平仓盈亏（合约）
+    position_mode: Optional[str] = None  # 持仓模式（单向/双向）
+    order_request: Optional[OrderRequest] = None  # 原始下单参数
+    additional_info: Optional[Any] = None  # 其他信息
 
-class BaseClient(QObject):
-    """交易所客户端基类"""
-    # 行情数据信号
-    tick_received = Signal(str, dict)         # symbol, tick_data
-    depth_received = Signal(str, dict)        # symbol, depth_data
-    kline_received = Signal(str, str, dict)   # symbol, interval, kline_data
-    # 交易数据信号
-    order_updated = Signal(str, dict)         # order_id, order_data
-    # 状态信号
-    connected = Signal()                      # 连接成功
-    disconnected = Signal()                   # 连接断开
-    connection_status = Signal(bool)          # is_connected
-    error_occurred = Signal(str)              # error_type, error_message
-    ws_status_changed = Signal(bool, bool)          # 添加WS状态变化信号
 
-    def __init__(self, inst_type: InstType):
-        super().__init__()
-        self.inst_type = inst_type
-        self._connected = False
-        self._subscribed_symbols = set()
-        self.exchange: str = None  # 交易所名称
-        self.instance_id = None  # 实例标识符
-
-    def connect(self) -> bool:
-        """建立连接"""
-        raise NotImplementedError
-
-    def disconnect(self) -> bool:
-        """断开连接"""
-        raise NotImplementedError
-
-    @property
-    def is_connected(self) -> bool:
-        """连接状态"""
-        try:
-            ws_status = self.get_ws_status()
-            connected = ws_status.get("public", False) and ws_status.get("private", False)
-            return connected
-        except Exception as e:
-            # print(f"[BaseClient] 检查连接状态出错: {e}")
-            return False
-
-    def get_ws_status(self) -> Dict[str, bool]:
-        """获取WebSocket状态"""
-        raise NotImplementedError
-
-    def validate_pair(self, pair: str) -> dict:
-        """
-        验证交易对是否有效并返回其参数
-        
-        Args:
-            pair: 交易对名称 (例如: "BTC/USDT")
-            
-        Returns:
-            dict: {
-                "valid": bool,              # 是否有效
-                "normalized_pair": str,      # 标准化后的交易对名称
-                "quantity_precision": int,   # 数量精度
-                "price_precision": int,      # 价格精度
-                "min_quantity": str,         # 最小数量
-                "min_amount": str,          # 最小金额
-                "error": str                # 错误信息(如果有)
-            }
-        """
-        raise NotImplementedError
-
-    def subscribe_pair(self, symbol: str, channels: List[str]) -> bool:
-        """
-        订阅交易对的指定数据类型
-        
-        Args:
-            symbol: 交易对
-            channels: 数据类型列表，如 ["ticker", "depth", "kline"]
-        """
-        raise NotImplementedError
-
-    def unsubscribe_pair(self, symbol: str, channels: List[str]) -> bool:
-        """取消订阅"""
-        raise NotImplementedError
+class BaseAPIClient(ABC):
+    """REST API客户端基类"""
+    
+    def __init__(self, api_key: str, api_secret: str, passphrase: str = None):
+        self.api_key = api_key
+        self.api_secret = api_secret
+        self.passphrase = passphrase
 
     @abstractmethod
-    def place_order(self, request: OrderRequest) -> OrderResponse:
+    def get_info(self) -> Dict:
+        """获取账户信息"""
+        pass
+
+    @abstractmethod
+    def get_symbol_config(self, **kwargs) -> List[SymbolConfig]:
+        """获取交易对配置信息"""
+        pass
+
+    @abstractmethod
+    def place_order(self, **kwargs) -> OrderResponse:
         """统一下单接口"""
         pass
 
     @abstractmethod
-    def get_fills(self, symbol: str, order_id: str) -> List[OrderResponse]:
+    def get_fills(self, **kwargs) -> List[FillResponse]:
         """获取成交明细"""
         pass
 
+class BaseWSClient(QObject):
+    """WebSocket客户端基类"""
+    
+    # WebSocket事件信号
+    message_received = Signal(dict)  # 消息接收信号
+    error = Signal(str)             # 错误信号
+    
+    # 连接状态信号
+    connected = Signal()            # 连接成功信号
+    disconnected = Signal()         # 断开连接信号
+    public_connected = Signal()     # 公共WS连接成功
+    public_disconnected = Signal()  # 公共WS断开连接
+    private_connected = Signal()    # 私有WS连接成功
+    private_disconnected = Signal() # 私有WS断开连接
+    
+    # 行情数据信号
+    tick_received = Signal(str, dict)         # symbol, tick_data
+    depth_received = Signal(str, dict)        # symbol, depth_data
+    kline_received = Signal(str, str, dict)   # symbol, interval, kline_data
+    
+    # 交易数据信号
+    order_updated = Signal(str, dict)         # order_id, order_data
+    position_updated = Signal(str, dict)      # symbol, position_data
+    balance_updated = Signal(str, dict)       # asset, balance_data
+
+    def __init__(self, url: str, is_private: bool = False):
+        super().__init__()
+        self.url = url
+        self.is_private = is_private
+        self._is_connected = False
+
     @abstractmethod
-    def all_close_positions(self, symbol: str, side: Optional[str] = None) -> List[OrderResponse]:
-        """一键平仓"""
+    def connect(self) -> bool:
+        """建立连接"""
         pass
 
-    def cancel_order(self, order_id: str, symbol: str) -> bool:
-        """撤单"""
-        raise NotImplementedError
+    @abstractmethod
+    def disconnect(self) -> bool:
+        """断开连接"""
+        pass
 
-    def query_order(self, order_id: str, symbol: str) -> Optional[OrderResponse]:
-        """查询订单"""
-        raise NotImplementedError
+    @abstractmethod
+    def subscribe(self, **kwargs) -> bool:
+        """订阅频道"""
+        pass
 
-    def get_position(self, symbol: str) -> Dict:
-        """查询持仓"""
-        raise NotImplementedError
+    @abstractmethod
+    def unsubscribe(self, **kwargs) -> bool:
+        """取消订阅"""
+        pass
 
-    def get_account(self) -> Dict:
-        """查询账户"""
-        raise NotImplementedError
+    @property
+    def is_connected(self) -> bool:
+        """连接状态"""
+        return self._is_connected
+
+class BaseClient(QObject):
+    """交易所客户端基类"""
+
+    # 状态信号
+    error_occurred = Signal(str)             # error_message
+    connection_status = Signal(bool)         # is_connected
+    
+    # WebSocket状态信号 
+    public_connected = Signal()              # 公共WS连接成功
+    public_disconnected = Signal()           # 公共WS断开
+    private_connected = Signal()             # 私有WS连接成功
+    private_disconnected = Signal()          # 私有WS断开
+
+    # 数据信号
+    tick_received = Signal(str, dict)        # symbol, tick_data
+    depth_received = Signal(str, dict)       # symbol, depth_data
+    kline_received = Signal(str, str, dict)  # symbol, interval, kline_data
+    
+    # 交易数据信号
+    order_updated = Signal(str, dict)        # order_id, order_data
+    position_updated = Signal(str, dict)     # symbol, position_data
+    balance_updated = Signal(str, dict)      # asset, balance_data
+
+    def __init__(self, inst_type: InstType):
+        super().__init__()
+        self._connected = False
+        self.inst_type = inst_type
+        self.exchange_str: str = None  # 交易所名称
+        self.api_client: BaseAPIClient = None
+        self.public_ws: BaseWSClient = None
+        self.private_ws: BaseWSClient = None
 
     def _handle_error(self, error_type: str, error_message: str):
-        """错误处理"""
-        self.error_occurred.emit(error_message)
+        """统一错误处理"""
+        self.error_occurred.emit(f"{error_type}: {error_message}")
 
-    def _handle_connect(self):
-        """处理连接成功"""
-        try:
-            old_status = self._connected
-            ws_status = self.get_ws_status()
-            new_status = ws_status.get("public", False) and ws_status.get("private", False)
-            
-            if old_status != new_status:
-                self._connected = new_status
-                if new_status:
-                    self.connected.emit()
-                    # 重新订阅所有交易对
-                    for symbol in self._subscribed_symbols:
-                        self.subscribe_pair(symbol, ["ticker"])
-                else:
-                    self.disconnected.emit()
-                self.connection_status.emit(new_status)
-        except Exception as e:
-            print(f"[BaseClient] 处理连接状态出错: {e}")
+    @abstractmethod
+    def connect(self) -> bool:
+        """建立连接"""
+        pass
 
-    def _handle_disconnect(self):
-        """处理断开连接"""
-        print(f"[BaseClient] 处理断开连接")
-        old_status = self._connected
-        self._connected = False
-        if old_status != self._connected:
-            print(f"[BaseClient] 发送连接状态变化信号: {self._connected}")
-            self.connection_status.emit(False)
-            self.disconnected.emit()
+    @abstractmethod  
+    def disconnect(self) -> bool:
+        """断开连接"""
+        pass
 
-    def _validate_symbol(self, symbol: str) -> bool:
-        """验证交易对格式"""
-        try:
-            base, quote = symbol.split('/')
-            return bool(base and quote)
-        except ValueError:
-            return False
+    @property
+    def is_connected(self) -> bool:
+        """连接状态"""
+        return self._connected
+
+    def get_ws_status(self) -> Dict[str, bool]:
+        """获取WebSocket连接状态"""
+        return {
+            "public": self.public_ws is not None and self.public_ws.is_connected,
+            "private": self.private_ws is not None and self.private_ws.is_connected
+        }

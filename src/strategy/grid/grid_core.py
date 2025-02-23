@@ -9,12 +9,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from qtpy.QtCore import QObject, Signal
-from src.exchange.base_client import InstType, OrderResponse, PositionSide, TradeSide
+from src.exchange.base_client import FillResponse, InstType, OrderResponse, PositionSide, TradeSide, SymbolConfig, TickerData
 from src.utils.common.tools import find_value
 from src.utils.logger.log_helper import grid_logger
 from decimal import Decimal
 from typing import Optional
-
 
 class AvgPriceTakeProfitConfig:
     """均价止盈配置"""
@@ -160,179 +159,263 @@ class LevelConfig:
     is_filled: bool = False  # 是否已成交
     order_id: Optional[str] = None  # 订单ID
 
+
 class GridData(QObject):
-    """单个网格策略的数据容器"""
+    """单个网格策略的数据容器，使用base_client.py中的数据结构"""
     data_updated = Signal(str)  # uid参数
 
-    def __init__(self, uid: str, pair: str, exchange: str, inst_type: InstType):
+    def __init__(self, uid: str, symbol_config: SymbolConfig, exchange: str, inst_type: InstType):
         super().__init__()
         self._lock = threading.Lock()
         self.uid = uid
-        self.pair = pair
-        self.exchange = exchange
+        self.symbol_config = symbol_config
+        self.exchange_str = exchange
         self.inst_type = inst_type
-        self.direction = PositionSide.LONG  # 默认做多
+        self.direction = PositionSide.LONG
         self.grid_levels: Dict[int, LevelConfig] = {}
-        
-        # 策略配置
+        self.ticker_data: Optional[TickerData] = None
+        self.total_realized_profit = Decimal('0')
+        self.status = "已添加"
+        self.operations = {"开仓": True, "平仓": True}
+        # 添加触发价格属性
+        self.open_trigger_price = None
+        self.tp_trigger_price = None
+        # 添加止盈止损配置
         self.take_profit_config = TakeProfitConfig()
         self.stop_loss_config = StopLossConfig()
         self.avg_price_take_profit_config = AvgPriceTakeProfitConfig()
         self.avg_price_stop_loss_config = AvgPriceStopLossConfig()
-        
-        # 市场数据
-        self.last_price: Optional[Decimal] = None
-        self.last_update_time: Optional[datetime] = None
-        self.total_realized_profit = Decimal('0')
 
-        # 交易参数缓存
-        self.quantity_precision: Optional[int] = None
-        self.price_precision: Optional[int] = None   
-        self.min_trade_amount: Optional[Decimal] = None
-        self.min_trade_value: Optional[Decimal] = None
-
-        # 移除原有的 row_dict，改用数据属性
-        self.status = "已添加"  # 运行状态
-        self.operations = {"开仓": True, "平仓": True}  # 操作开关
-
-    def update_market_data(self, data) -> None:
-        """更新市场数据"""
-        try:
-            price_str = find_value(data, "lastPr")
-            if not price_str:
-                return
-                
-            self.last_price = Decimal(str(price_str))
-            timestamp = find_value(data, "ts")
-            if timestamp:
-                self.last_update_time = datetime.fromtimestamp(int(timestamp) / 1000)
-                
-            # 只发送更新信号
+    def update_market_data(self, ticker: TickerData) -> None:
+        """更新市场数据，使用TickerData"""
+        with self._lock:
+            self.ticker_data = ticker
             self.data_updated.emit(self.uid)
-            
-        except Exception as e:
-            print(f"更新市场数据错误: {e}")
 
     def reset_level(self, level: int) -> bool:
-        """
-        重置网格层状态
-        返回: 重置是否成功
-        """
-        # print(f"\n[GridData] === 重置网格层 {level} ===")
-        # print(f"[GridData] 当前状态:")
-        # print(f"  总层数: {len(self.grid_levels)}")
-        
-        if level not in self.grid_levels:
-            # print(f"[GridData] 错误: 层级 {level} 不存在")
-            return False
-            
-        config = self.grid_levels[level]
-        # print(f"[GridData] 重置前配置:")
-        # print(f"  {config}")
-        
-        # 保存原有的网格参数
-        saved_params = {
-            "interval_percent": config.interval_percent,
-            "open_rebound_percent": config.open_rebound_percent,
-            "close_rebound_percent": config.close_rebound_percent,
-            "take_profit_percent": config.take_profit_percent,
-            "invest_amount": config.invest_amount
-        }
-        self.data_updated.emit(self.uid)
-        # print(f"[GridData] 保存的参数: {saved_params}")
-        
-        # 重新初始化该层配置
-        self.grid_levels[level] = LevelConfig(
-            interval_percent=saved_params["interval_percent"],
-            open_rebound_percent=saved_params["open_rebound_percent"],
-            close_rebound_percent=saved_params["close_rebound_percent"],
-            take_profit_percent=saved_params["take_profit_percent"],
-            invest_amount=saved_params["invest_amount"],
-            filled_amount=None,
-            filled_price=None,
-            filled_time=None,
-            is_filled=False,
-            order_id=None
-        )
-        
-        # print(f"[GridData] 重置后配置:")
-        # print(f"  {self.grid_levels[level]}")
-        
-        return True
-
-    def update_grid_display(self):
-        """统一更新表格显示数据"""
-        try:
-            # 计算当前指标
-            position_metrics = self.calculate_position_metrics()
-            grid_status = self.get_grid_status()
-            tp_sl_prices = self.calculate_avg_price_tp_sl_prices()
-            
-            # 更新行数据
-            self.row_dict.update({
-                # 基础状态
-                "当前层数": f"{grid_status['filled_levels']}/{grid_status['total_levels']}" 
-                           if grid_status["total_levels"] > 0 else "未设置",
-                           
-                # 持仓信息           
-                "持仓均价": str(position_metrics['avg_price']),
-                "持仓价值": str(position_metrics['total_value']),
-                "持仓盈亏": str(position_metrics['unrealized_pnl']),
-                "实现盈亏": str(self.total_realized_profit),
+        """重置网格层状态"""
+        with self._lock:
+            if level not in self.grid_levels:
+                return False
                 
-                # 价格信息
-                "最后价格": str(self.last_price) if self.last_price else "-",
-                "最后时间": self.last_update_time.strftime("%H:%M:%S") if self.last_update_time else "-",
-                
-                # 触发价格
-                "均价止盈触发价": str(tp_sl_prices['avg_tp_price']) if tp_sl_prices['avg_tp_price'] else "-",
-                "均价止损触发价": str(tp_sl_prices['avg_sl_price']) if tp_sl_prices['avg_sl_price'] else "-"
-            })
+            config = self.grid_levels[level]
+            saved_params = {
+                "interval_percent": config.interval_percent,
+                "open_rebound_percent": config.open_rebound_percent,
+                "close_rebound_percent": config.close_rebound_percent,
+                "take_profit_percent": config.take_profit_percent,
+                "invest_amount": config.invest_amount
+            }
             
-            # 发送更新信号
+            self.grid_levels[level] = LevelConfig(
+                interval_percent=saved_params["interval_percent"],
+                open_rebound_percent=saved_params["open_rebound_percent"],
+                close_rebound_percent=saved_params["close_rebound_percent"],
+                take_profit_percent=saved_params["take_profit_percent"],
+                invest_amount=saved_params["invest_amount"]
+            )
             self.data_updated.emit(self.uid)
-        
-        except Exception as e:
-            print(f"[GridData] 更新显示数据失败: {e}")
-            print(f"[GridData] 错误详情: {traceback.format_exc()}")
+            return True
 
     def set_direction(self, is_long: bool):
-        """设置交易方向"""
+        """设置交易方向使用PositionSide"""
         self.direction = PositionSide.LONG if is_long else PositionSide.SHORT
-        self.data_updated.emit(self.uid)  # 直接发送更新信号
+        self.data_updated.emit(self.uid)
 
     def update_operation_status(self, operation: dict):
         """更新操作状态"""
-        self.operations = operation.copy()  # 复制操作状态
+        self.operations = operation.copy()
         self.data_updated.emit(self.uid)
 
     def reset_to_initial(self):
         """重置到初始状态"""
         with self._lock:
-            # 清空网格配置
             self.grid_levels.clear()
-            
-            # 重置价格和时间
-            self.last_price = None
-            self.last_update_time = None
+            self.ticker_data = None
             self.total_realized_profit = Decimal('0')
-            
-            # 重置触发价格
-            self.open_trigger_price = None
-            self.tp_trigger_price = None
-            self.atp_trigger_price = None
-            self.asl_trigger_price = None
-            
-            # 重置状态
             self.status = "已重置"
             self.operations = {"开仓": True, "平仓": True}
-            
-            # 重置止盈止损配置
-            self.take_profit_config.disable()
-            self.stop_loss_config.disable()
-            
-            # 发送更新信号
             self.data_updated.emit(self.uid)
+
+    def update_level(self, level: int, config: dict) -> None:
+        """更新网格层配置"""
+        with self._lock:
+            level_config = self.grid_levels.get(level)
+            if not level_config:
+                self.grid_levels[level] = LevelConfig(
+                    interval_percent=Decimal('0'),
+                    open_rebound_percent=Decimal('0'),
+                    close_rebound_percent=Decimal('0'),
+                    take_profit_percent=Decimal('0'),
+                    invest_amount=Decimal('0'),
+                )
+                level_config = self.grid_levels[level]
+
+            # 处理成交信息
+            if 'filled_amount' in config:
+                level_config.filled_amount = Decimal(str(config['filled_amount'])) if config['filled_amount'] else None
+                level_config.filled_price = Decimal(str(config['filled_price'])) if config['filled_price'] else None
+                level_config.filled_time = config['filled_time']
+                level_config.is_filled = config['is_filled']
+                level_config.order_id = config.get('order_id')
+            
+            # 处理网格配置 - 使用英文key
+            if 'interval_percent' in config:
+                level_config.interval_percent = Decimal(str(config['interval_percent']))
+            if 'open_rebound_percent' in config:
+                level_config.open_rebound_percent = Decimal(str(config['open_rebound_percent']))
+            if 'close_rebound_percent' in config:    
+                level_config.close_rebound_percent = Decimal(str(config['close_rebound_percent']))
+            if 'take_profit_percent' in config:
+                level_config.take_profit_percent = Decimal(str(config['take_profit_percent'])) 
+            if 'invest_amount' in config:
+                level_config.invest_amount = Decimal(str(config['invest_amount']))
+
+    def calculate_position_metrics(self) -> dict:
+        """计算持仓相关指标"""
+        current_price = self.ticker_data.lastPr if self.ticker_data else Decimal('0')
+        total_size = Decimal('0')
+        total_cost = Decimal('0')
+
+        for config in self.grid_levels.values():
+            if config.is_filled and config.filled_amount and config.filled_price:
+                total_size += config.filled_amount
+                total_cost += config.filled_amount * config.filled_price
+
+        if total_size > 0:
+            avg_price = total_cost / total_size
+            total_value = total_size * (current_price if self.is_spot() else avg_price)
+            unrealized_pnl = (current_price - avg_price) * total_size if self.is_long() else (avg_price - current_price) * total_size
+        else:
+            avg_price = total_value = unrealized_pnl = Decimal('0')
+
+        return {
+            'total_size': total_size,
+            'total_value': total_value.quantize(Decimal('0.00')),
+            'avg_price': avg_price.quantize(Decimal('0.0000')),
+            'unrealized_pnl': unrealized_pnl.quantize(Decimal('0.0000'))
+        }
+
+    def get_grid_status(self) -> dict:
+        """获取网格状态信息"""
+        total_levels = len(self.grid_levels)
+        if total_levels == 0:
+            return {
+                "is_configured": False,
+                "total_levels": 0,
+                "filled_levels": 0,
+                "next_level": None,
+                "is_full": False
+            }
+            
+        filled_levels = sum(1 for config in self.grid_levels.values() if config.is_filled)
+        next_level = min([level for level, config in self.grid_levels.items() if not config.is_filled], default=None)
+        
+        return {
+            "is_configured": True,
+            "total_levels": total_levels,
+            "filled_levels": filled_levels,
+            "next_level": next_level,
+            "is_full": filled_levels == total_levels
+        }
+
+    def to_dict(self) -> dict:
+        return {
+            "uid": self.uid,
+            "symbol_config": {
+                "symbol": self.symbol_config.symbol,
+                "pair": self.symbol_config.pair,
+                "base_coin": self.symbol_config.base_coin,
+                "quote_coin": self.symbol_config.quote_coin,
+                "base_precision": self.symbol_config.base_precision,
+                "quote_precision": self.symbol_config.quote_precision,
+                "price_precision": self.symbol_config.price_precision,
+                "min_base_amount": str(self.symbol_config.min_base_amount),
+                "min_quote_amount": str(self.symbol_config.min_quote_amount)
+            },
+            "exchange": self.exchange_str,
+            "inst_type": self.inst_type.value,
+            "direction": self.direction.value,
+            "ticker_data": {
+                "instId": self.ticker_data.instId,
+                "lastPr": str(self.ticker_data.lastPr),
+                "ts": self.ticker_data.ts
+            } if self.ticker_data else None,
+            "total_realized_profit": str(self.total_realized_profit),
+            "status": self.status,
+            "operations": self.operations,
+            "grid_levels": {
+                str(level): {
+                    "interval_percent": str(config.interval_percent),
+                    "open_rebound_percent": str(config.open_rebound_percent),
+                    "close_rebound_percent": str(config.close_rebound_percent),
+                    "take_profit_percent": str(config.take_profit_percent),
+                    "invest_amount": str(config.invest_amount),
+                    "filled_amount": str(config.filled_amount) if config.filled_amount else None,
+                    "filled_price": str(config.filled_price) if config.filled_price else None,
+                    "filled_time": config.filled_time.isoformat() if config.filled_time else None,
+                    "is_filled": config.is_filled,
+                    "order_id": config.order_id
+                } for level, config in self.grid_levels.items()
+            },
+            "open_trigger_price": str(self.open_trigger_price) if self.open_trigger_price else None,
+            "tp_trigger_price": str(self.tp_trigger_price) if self.tp_trigger_price else None,
+            "take_profit_config": self.take_profit_config.to_dict(),
+            "stop_loss_config": self.stop_loss_config.to_dict(),
+            "avg_price_take_profit_config": self.avg_price_take_profit_config.to_dict(),
+            "avg_price_stop_loss_config": self.avg_price_stop_loss_config.to_dict()
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'GridData':
+        symbol_config = SymbolConfig(
+            symbol=data["symbol_config"]["symbol"],
+            pair=data["symbol_config"]["pair"],
+            base_coin=data["symbol_config"]["base_coin"],
+            quote_coin=data["symbol_config"]["quote_coin"],
+            base_precision=data["symbol_config"]["base_precision"],
+            quote_precision=data["symbol_config"]["quote_precision"],
+            price_precision=data["symbol_config"]["price_precision"],
+            min_base_amount=Decimal(data["symbol_config"]["min_base_amount"]),
+            min_quote_amount=Decimal(data["symbol_config"]["min_quote_amount"])
+        )
+        
+        instance = cls(data["uid"], symbol_config, data["exchange"], InstType(data["inst_type"]))
+        instance.direction = PositionSide(data["direction"])
+        instance.status = data["status"]
+        instance.operations = data["operations"]
+        instance.total_realized_profit = Decimal(data["total_realized_profit"])
+
+        if data.get("ticker_data"):
+            instance.ticker_data = TickerData(
+                instId=data["ticker_data"]["instId"],
+                lastPr=Decimal(data["ticker_data"]["lastPr"]),
+                ts=data["ticker_data"]["ts"]
+            )
+
+        for level_str, grid_config in data["grid_levels"].items():
+            level = int(level_str)
+            instance.grid_levels[level] = LevelConfig(
+                interval_percent=Decimal(grid_config["interval_percent"]),
+                open_rebound_percent=Decimal(grid_config["open_rebound_percent"]),
+                close_rebound_percent=Decimal(grid_config["close_rebound_percent"]),
+                take_profit_percent=Decimal(grid_config["take_profit_percent"]),
+                invest_amount=Decimal(grid_config["invest_amount"]),
+                filled_amount=Decimal(grid_config["filled_amount"]) if grid_config["filled_amount"] else None,
+                filled_price=Decimal(grid_config["filled_price"]) if grid_config["filled_price"] else None,
+                filled_time=datetime.fromisoformat(grid_config["filled_time"]) if grid_config["filled_time"] else None,
+                is_filled=grid_config["is_filled"],
+                order_id=grid_config["order_id"]
+            )
+        
+        instance.open_trigger_price = Decimal(data["open_trigger_price"]) if data.get("open_trigger_price") else None
+        instance.tp_trigger_price = Decimal(data["tp_trigger_price"]) if data.get("tp_trigger_price") else None
+        instance.take_profit_config = TakeProfitConfig.from_dict(data.get("take_profit_config", {}))
+        instance.stop_loss_config = StopLossConfig.from_dict(data.get("stop_loss_config", {}))
+        instance.avg_price_take_profit_config = AvgPriceTakeProfitConfig.from_dict(data.get("avg_price_take_profit_config", {}))
+        instance.avg_price_stop_loss_config = AvgPriceStopLossConfig.from_dict(data.get("avg_price_stop_loss_config", {}))
+        
+        return instance
 
     def is_spot(self) -> bool:
         return self.inst_type == InstType.SPOT
@@ -340,11 +423,6 @@ class GridData(QObject):
     def is_long(self) -> bool:
         """是否做多"""
         return self.direction == PositionSide.LONG
-
-    def update_operation_status(self, operation: dict):
-        """更新操作状态"""
-        self.logger.info(f"更新操作状态 - {self.uid} - {operation}")
-        self.set_row_value("操作", operation)
 
     def is_empty(self) -> bool:
         """检查是否为空配置（无任何网格层）"""
@@ -354,15 +432,51 @@ class GridData(QObject):
         """检查是否有已开仓的层级"""
         return any(config.is_filled for config in self.grid_levels.values())
 
-    def _calculate_profit(self, level: int, fill_data: OrderResponse) -> Decimal:
-        """计算止盈订单的收益"""
+    def update_order_fill(self, level: int, fill_response: 'FillResponse', trade_type: TradeSide = TradeSide.OPEN) -> None:
+        try:
+            level_config = self.grid_levels.get(level)
+            if not level_config:
+                raise ValueError(f"未找到网格层级: {level}")
+
+            if trade_type == TradeSide.OPEN:
+                level_config.filled_amount = fill_response.filled_base_amount
+                level_config.filled_price = fill_response.filled_price
+                level_config.filled_time = datetime.fromtimestamp(fill_response.trade_time / 1000) if fill_response.trade_time else datetime.now()
+                level_config.is_filled = True
+                level_config.order_id = fill_response.order_id
+
+                if level + 1 in self.grid_levels:
+                    next_config = self.grid_levels[level + 1]
+                    interval = next_config.interval_percent / Decimal('100')
+                    if self.is_long():
+                        self.open_trigger_price = fill_response.filled_price * (Decimal('1') - interval)
+                    else:
+                        self.open_trigger_price = fill_response.filled_price * (Decimal('1') + interval)
+
+                if level_config.take_profit_percent:
+                    profit_rate = level_config.take_profit_percent / Decimal('100')
+                    if self.is_long():
+                        self.tp_trigger_price = fill_response.filled_price * (Decimal('1') + profit_rate)
+                    else:
+                        self.tp_trigger_price = fill_response.filled_price * (Decimal('1') - profit_rate)
+            else:  # 平仓更新
+                level_config.last_tp_price = fill_response.filled_price
+                self.total_realized_profit += fill_response.profit or Decimal('0')
+                self.reset_level(level)
+
+            self.data_updated.emit(self.uid)
+
+        except Exception as e:
+            print(f"[GridData] 更新订单成交信息失败: {e}")
+            raise
+
+    def _calculate_profit(self, level: int, fill_data: 'FillResponse') -> Decimal:
         try:
             config = self.grid_levels.get(level)
             if not config or not config.is_filled:
                 print(f"[GridData] 错误: 层级 {level} 未开仓，无法计算收益")
                 return Decimal('0')
 
-            # 获取开仓价格和成交数量
             open_price = config.filled_price
             filled_amount = config.filled_amount
             close_price = fill_data.filled_price
@@ -371,12 +485,9 @@ class GridData(QObject):
                 print(f"[GridData] 错误: 缺失必要数据 - 开仓价: {open_price}, 数量: {filled_amount}, 平仓价: {close_price}")
                 return Decimal('0')
 
-            # 根据方向计算收益
             if self.is_long():
-                # 做多：(平仓价 - 开仓价) * 数量
                 profit = (close_price - open_price) * filled_amount
             else:
-                # 做空：(开仓价 - 平仓价) * 数量
                 profit = (open_price - close_price) * filled_amount
 
             print(f"[GridData] 计算收益:")
@@ -392,8 +503,7 @@ class GridData(QObject):
             print(f"[GridData] 错误详情: {traceback.format_exc()}")
             return Decimal('0')
 
-    def handle_take_profit(self, level: int, fill_data: OrderResponse) -> None:
-        """处理止盈成交"""
+    def handle_take_profit(self, level: int, fill_data: 'FillResponse') -> None:
         with self._lock:
             print(f"\n[GridData] === 处理止盈成交 === Level {level}")
             if level not in self.grid_levels:
@@ -402,29 +512,19 @@ class GridData(QObject):
             
             config = self.grid_levels[level]
             try:
-                # 优先尝试从 fill_data 获取收益
                 realized_profit = fill_data.profit or Decimal('0')
-
-                # 如果 profit 未提供或为 0，则通过计算获取
                 if not realized_profit:
                     realized_profit = self._calculate_profit(level, fill_data)
 
                 print(f"[GridData] 盈亏计算:")
                 print(f"  收益: {realized_profit}")
                 print(f"  手续费: {fill_data.fee}")
-                print(f"  净盈亏: {realized_profit - fill_data.fee}")
+                print(f"  净盈亏: {realized_profit - (fill_data.fee or Decimal('0'))}")
 
-                # 记录上次止盈价格（用于下次开仓判断）
                 setattr(config, 'last_tp_price', fill_data.filled_price)
-
-                # 更新累计盈亏（减去手续费）
-                net_profit = realized_profit - fill_data.fee
                 self.total_realized_profit += realized_profit
-                self.row_dict["实现盈亏"] = str(self.total_realized_profit)
-
                 print(f"[GridData] 累计已实现盈亏: {self.total_realized_profit}")
                 
-                # 重置该层状态
                 if self.reset_level(level):
                     print(f"[GridData] 层级 {level} 重置成功")
                     self.data_updated.emit(self.uid)
@@ -436,212 +536,18 @@ class GridData(QObject):
                 print(f"[GridData] 处理止盈错误: {e}")
                 print(f"[GridData] 错误详情: {traceback.format_exc()}")
 
-    def update_order_fill(self, level: int, fill_response: OrderResponse, trade_type: TradeSide = TradeSide.OPEN) -> None:
-        try:
-            level_config = self.grid_levels.get(level)
-            if not level_config:
-                raise ValueError(f"未找到网格层级: {level}")
-
-            if trade_type == TradeSide.OPEN:
-                # 更新开仓信息
-                level_config.filled_amount = fill_response.filled_amount
-                level_config.filled_price = fill_response.filled_price
-                level_config.filled_time = datetime.fromtimestamp(fill_response.open_time/1000) if fill_response.open_time else datetime.now()
-                level_config.is_filled = True
-                level_config.order_id = fill_response.order_id
-
-                # 更新触发价格
-                if level + 1 in self.grid_levels:
-                    next_config = self.grid_levels[level + 1]
-                    interval = next_config.interval_percent / Decimal('100')
-                    if self.is_long():
-                        self.open_trigger_price = fill_response.filled_price * (Decimal('1') - interval)
-                    else:
-                        self.open_trigger_price = fill_response.filled_price * (Decimal('1') + interval)
-
-                # 计算止盈触发价
-                if level_config.take_profit_percent:
-                    profit_rate = level_config.take_profit_percent / Decimal('100')
-                    if self.is_long():
-                        self.tp_trigger_price = fill_response.filled_price * (Decimal('1') + profit_rate)
-                    else:
-                        self.tp_trigger_price = fill_response.filled_price * (Decimal('1') - profit_rate)
-            else:  # 平仓更新
-                level_config.last_tp_price = fill_response.filled_price  # 记录止盈价格
-                self.total_realized_profit += fill_response.profit or Decimal('0')
-                self.reset_level(level)
-
-            # 发送数据更新信号
-            self.data_updated.emit(self.uid)
-
-        except Exception as e:
-            print(f"[GridData] 更新订单成交信息失败: {e}")
-            raise
-
-    def update_level(self, level: int, config: dict) -> None:
-        """更新网格层配置"""
-        # print(f"\n[GridData] === 更新网格层 {level} ===")
-        # print(f"[GridData] 配置数据: {config}")
+    def add_realized_profit(self, profit: Decimal):
+        """添加已实现盈利"""
+        self.total_realized_profit += profit
+        grid_logger.info(f"[GridData] 更新累计已实现盈利: {self.total_realized_profit}")
+        self.data_updated.emit(self.uid)
         
-        # 获取层级配置
-        level_config = self.grid_levels.get(level)
-        if not level_config:
-            # 如果层级不存在，初始化一个空的 LevelConfig
-            self.grid_levels[level] = LevelConfig(
-                interval_percent=Decimal('0'),
-                open_rebound_percent=Decimal('0'),
-                close_rebound_percent=Decimal('0'),
-                take_profit_percent=Decimal('0'),
-                invest_amount=Decimal('0'),
-            )
-            level_config = self.grid_levels[level]
-            # print(f"[GridData] 层级 {level} 初始化完成")
-
-        try:
-            # 检查是否有成交信息
-            has_filled_data = all(key in config for key in ['filled_amount', 'filled_price', 'filled_time', 'is_filled'])
-            # print(f"[GridData] 是否包含成交信息: {has_filled_data}")
-            
-            if has_filled_data:
-                # 更新成交信息
-                filled_data = {
-                    'filled_amount': Decimal(str(config['filled_amount'])) if config['filled_amount'] else None,
-                    'filled_price': Decimal(str(config['filled_price'])) if config['filled_price'] else None,
-                    'filled_time': config['filled_time'],
-                    'is_filled': config['is_filled'],
-                    'order_id': config.get('order_id')
-                }
-                # print(f"[GridData] 更新成交信息: {filled_data}")
-                
-                # 使用object.__setattr__来更新成交信息
-                for key, value in filled_data.items():
-                    object.__setattr__(level_config, key, value)
-
-            # 更新其他配置参数
-            if "间隔%" in config:
-                level_config.interval_percent = Decimal(str(config["间隔%"]))
-            if "开仓反弹%" in config:
-                level_config.open_rebound_percent = Decimal(str(config["开仓反弹%"]))
-            if "平仓反弹%" in config:
-                level_config.close_rebound_percent = Decimal(str(config["平仓反弹%"]))
-            if "止盈%" in config:
-                level_config.take_profit_percent = Decimal(str(config["止盈%"]))
-            if "成交额" in config:
-                level_config.invest_amount = Decimal(str(config["成交额"]))
-
-            # print(f"[GridData] 层级 {level} 更新后的配置:")
-            # print(f"  间隔%: {level_config.interval_percent}")
-            # print(f"  开仓反弹%: {level_config.open_rebound_percent}")
-            # print(f"  平仓反弹%: {level_config.close_rebound_percent}")
-            # print(f"  止盈%: {level_config.take_profit_percent}")
-            # print(f"  成交额: {level_config.invest_amount}")
-            # print(f"  是否已成交: {level_config.is_filled}")
-            # if level_config.is_filled:
-            #     print(f"  成交数量: {level_config.filled_amount}")
-            #     print(f"  成交价格: {level_config.filled_price}")
-            #     print(f"  成交时间: {level_config.filled_time}")
-            #     print(f"  订单ID: {level_config.order_id}")
-
-        except Exception as e:
-            print(f"[GridData] 更新层级配置错误: {e}")
-            print(f"[GridData] 错误详情: {traceback.format_exc()}")
-
-    def calculate_position_metrics(self) -> dict:
-        """计算持仓相关指标"""
-        try:
-            # print(f"\n[GridData] === 计算持仓指标 ===")
-            # print(f"当前价格: {self.last_price}")
-            
-            # 确保 last_price 是 Decimal 类型
-            try:
-                current_price = Decimal(str(self.last_price)) if self.last_price else None
-            except (TypeError, ValueError):
-                current_price = None
-                
-            if not current_price:
-                # print("[GridData] 当前无有效价格")
-                return {
-                    'total_value': Decimal('0'),
-                    'avg_price': Decimal('0'),
-                    'unrealized_pnl': Decimal('0'),
-                    'total_size': Decimal('0')
-                }
-
-            # print(f"网格配置数: {len(self.grid_levels)}")
-            
-            total_size = Decimal('0')
-            total_cost = Decimal('0')
-
-            # 检查每个网格的状态
-            for level, config in self.grid_levels.items():
-                # print(f"\n检查网格 {level}:")
-                # print(f"  已开仓: {config.is_filled}")
-                # print(f"  开仓量: {config.filled_amount}")
-                # print(f"  开仓价: {config.filled_price}")
-                
-                if not config.is_filled:
-                    # print("  未开仓,跳过")
-                    continue
-                    
-                try:
-                    # 确保数据类型转换正确
-                    size = Decimal(str(config.filled_amount)) if config.filled_amount else None
-                    entry_price = Decimal(str(config.filled_price)) if config.filled_price else None
-                    
-                    if not (size and entry_price):
-                        # print("  无效的开仓数据,跳过")
-                        continue
-                    
-                    # 累加并打印
-                    total_size += size
-                    total_cost += size * entry_price
-                    # print(f"  累计持仓量: {total_size}")
-                    # print(f"  累计成本: {total_cost}")
-                    
-                except (TypeError, ValueError) as e:
-                    # print(f"  数据转换错误: {e}")
-                    continue
-
-            # 计算结果
-            if total_size > 0:
-                avg_price = (total_cost / total_size).quantize(Decimal('0.0000'))
-                if self.is_spot():
-                    total_value = (total_size * current_price).quantize(Decimal('0.00'))
-                else:
-                    total_value = (total_size * avg_price).quantize(Decimal('0.00'))
-                unrealized_pnl = (
-                    (current_price - avg_price) * total_size if self.is_long()
-                    else (avg_price - current_price) * total_size
-                ).quantize(Decimal('0.0000'))
-            else:
-                avg_price = Decimal('0')
-                total_value = Decimal('0')
-                unrealized_pnl = Decimal('0')
-                
-            result = {
-                'total_size': total_size,
-                'total_value': total_value,
-                'avg_price': avg_price,
-                'unrealized_pnl': unrealized_pnl,
-            }
-            
-            # print("\n计算结果:")
-            # print(f"  总持仓量: {total_size}")
-            # print(f"  持仓均价: {result['avg_price']}")
-            # print(f"  持仓价值: {result['total_value']}")
-            # print(f"  未实现盈亏: {result['unrealized_pnl']}")
-            
-            return result
-
-        except Exception as e:
-            print(f"[GridData] 计算持仓指标错误: {e}")
-            print(f"[GridData] 错误详情: {traceback.format_exc()}")
-            return {
-                'total_value': Decimal('0'),
-                'avg_price': Decimal('0'),
-                'unrealized_pnl': Decimal('0'),
-                'total_size': Decimal('0')
-            }
+        position_metrics = self.calculate_position_metrics()
+        unrealized_pnl = position_metrics['unrealized_pnl']
+        if self._check_take_profit_condition(unrealized_pnl):
+            grid_logger.info(f"[GridData] 达到总体止盈条件：{self.total_realized_profit} >= {self.take_profit_config.profit_amount}")
+            return True
+        return False
 
     def calculate_avg_price_tp_sl_prices(self) -> dict:
         """计算均价止盈止损触发价格"""
@@ -676,24 +582,6 @@ class GridData(QObject):
                 result['avg_sl_price'] = avg_price * (Decimal('1') + loss_rate)
                 
         return result
-
-    def add_realized_profit(self, profit: Decimal):
-        """添加已实现盈利"""
-        self.total_realized_profit += profit
-        # 更新显示
-        self.row_dict["实现盈亏"] = str(self.total_realized_profit)
-        self.logger.info(f"[GridData] 更新累计已实现盈利: {self.total_realized_profit}")
-        
-        # 发送更新信号
-        self.data_updated.emit(self.uid)
-        
-        # 检查是否达到总体止盈条件
-        position_metrics = self.calculate_position_metrics()
-        unrealized_pnl = position_metrics['unrealized_pnl']
-        if self._check_take_profit_condition(unrealized_pnl):
-            self.logger.info(f"[GridData] 达到总体止盈条件：{self.total_realized_profit} >= {self.take_profit_config.profit_amount}")
-            return True
-        return False
 
     def _check_take_profit_condition(self, unrealized_pnl: Decimal) -> bool:
         """检查是否达到总体止盈条件（使用累计已实现盈利）"""
@@ -751,39 +639,6 @@ class GridData(QObject):
             print("[GridData] 没有找到任何已成交层级")
             return None
 
-    def get_grid_status(self) -> dict:
-        """获取网格状态信息"""
-        # with self._lock:
-        total_levels = len(self.grid_levels)
-        if total_levels == 0:
-            return {
-                "is_configured": False,
-                "total_levels": 0,
-                "filled_levels": 0,
-                "next_level": None,
-                "is_full": False
-            }
-        # 计算已开仓的层数
-        filled_levels = sum(1 for config in self.grid_levels.values() if config.is_filled)
-        last_filled = max((level for level, config in self.grid_levels.items() 
-                        if config.is_filled), default=None)
-        next_level = self.get_next_level()
-        status = {
-            "is_configured": True,
-            "total_levels": total_levels,
-            "filled_levels": filled_levels,
-            "last_filled_level": last_filled,
-            "next_level": next_level,
-            "is_full": filled_levels == total_levels
-        }
-        # print(f"[GridData] {self.uid} - 网格状态:")
-        # print(f"  总层数: {status['total_levels']}")
-        # print(f"  已开仓层数: {status['filled_levels']}")
-        # print(f"  最后开仓层: {status['last_filled_level']}")
-        # print(f"  下一开仓层: {status['next_level']}")
-        # print(f"  是否已满: {status['is_full']}")
-        return status
-
     def get_next_level(self) -> Optional[int]:
         """获取下一个未成交的层级"""
         # with self._lock:
@@ -793,144 +648,3 @@ class GridData(QObject):
             if not self.grid_levels[level].is_filled:
                 return level
         return None  # 已开满仓
-
-    def to_dict(self) -> dict:
-        """转换为字典格式"""
-        try:
-            data = {
-                # 基础信息
-                "uid": self.uid,
-                "pair": self.pair,
-                "exchange": self.exchange,
-                "inst_type": self.inst_type.value,
-                "direction": self.direction.value,
-                
-                # 交易参数
-                "quantity_precision": self.quantity_precision,
-                "price_precision": self.price_precision,
-                "min_trade_amount": str(self.min_trade_amount) if self.min_trade_amount else None,
-                "min_trade_value": str(self.min_trade_value) if self.min_trade_value else None,
-                
-                # 市场数据
-                "last_price": str(self.last_price) if self.last_price else None,
-                "last_update_time": self.last_update_time.isoformat() if self.last_update_time else None,
-                
-                # 策略状态
-                "status": self.status,
-                "operations": self.operations,
-                "total_realized_profit": str(self.total_realized_profit),
-                
-                # 触发价格
-                "open_trigger_price": str(self.open_trigger_price) if self.open_trigger_price else None,
-                "tp_trigger_price": str(self.tp_trigger_price) if self.tp_trigger_price else None,
-                "atp_trigger_price": str(self.atp_trigger_price) if self.atp_trigger_price else None,
-                "asl_trigger_price": str(self.asl_trigger_price) if self.asl_trigger_price else None,
-                
-                # 配置
-                "take_profit_config": self.take_profit_config.to_dict(),
-                "stop_loss_config": self.stop_loss_config.to_dict(),
-                "avg_price_take_profit_config": self.avg_price_take_profit_config.to_dict(),
-                "avg_price_stop_loss_config": self.avg_price_stop_loss_config.to_dict(),
-                
-                # 网格层配置
-                "grid_levels": {
-                    str(level): {
-                        "interval_percent": str(config.interval_percent),
-                        "open_rebound_percent": str(config.open_rebound_percent),
-                        "close_rebound_percent": str(config.close_rebound_percent),
-                        "take_profit_percent": str(config.take_profit_percent),
-                        "invest_amount": str(config.invest_amount),
-                        "filled_amount": str(config.filled_amount) if config.filled_amount else None,
-                        "filled_price": str(config.filled_price) if config.filled_price else None,
-                        "filled_time": config.filled_time.isoformat() if config.filled_time else None,
-                        "is_filled": config.is_filled,
-                        "order_id": config.order_id
-                    }
-                    for level, config in self.grid_levels.items()
-                }
-            }
-            return data
-            
-        except Exception as e:
-            print(f"[GridData] 转换为字典失败: {e}")
-            print(f"[GridData] 错误详情: {traceback.format_exc()}")
-            raise
-
-    @classmethod
-    def from_dict(cls, data: dict) -> 'GridData':
-        """从字典创建实例"""
-        try:
-            print(f"[GridData] === 开始反序列化数据 === {data['uid']}")
-            
-            # 创建实例
-            inst_type = InstType(data["inst_type"])
-            instance = cls(data["uid"], data["pair"], data["exchange"], inst_type)
-            
-            # 设置基础属性
-            instance.direction = PositionSide(data["direction"])
-            instance.status = data["status"]
-            instance.operations = data["operations"]
-            
-            # 设置交易参数
-            instance.quantity_precision = data.get("quantity_precision")
-            instance.price_precision = data.get("price_precision")
-            min_trade_amount = data.get("min_trade_amount")
-            min_trade_value = data.get("min_trade_value")
-            instance.min_trade_amount = Decimal(min_trade_amount) if min_trade_amount else None
-            instance.min_trade_value = Decimal(min_trade_value) if min_trade_value else None
-            
-            # 设置市场数据
-            last_price = data.get("last_price")
-            last_update_time = data.get("last_update_time")
-            instance.last_price = Decimal(last_price) if last_price else None
-            instance.last_update_time = datetime.fromisoformat(last_update_time) if last_update_time else None
-            instance.total_realized_profit = Decimal(data["total_realized_profit"])
-            
-            # 设置触发价格
-            open_trigger = data.get("open_trigger_price")
-            tp_trigger = data.get("tp_trigger_price")
-            atp_trigger = data.get("atp_trigger_price")
-            asl_trigger = data.get("asl_trigger_price")
-            instance.open_trigger_price = Decimal(open_trigger) if open_trigger else None
-            instance.tp_trigger_price = Decimal(tp_trigger) if tp_trigger else None
-            instance.atp_trigger_price = Decimal(atp_trigger) if atp_trigger else None
-            instance.asl_trigger_price = Decimal(asl_trigger) if asl_trigger else None
-            
-            # 加载配置
-            instance.take_profit_config = TakeProfitConfig.from_dict(data.get('take_profit_config', {}))
-            instance.stop_loss_config = StopLossConfig.from_dict(data.get('stop_loss_config', {}))
-            instance.avg_price_take_profit_config = AvgPriceTakeProfitConfig.from_dict(
-                data.get('avg_price_take_profit_config', {})
-            )
-            instance.avg_price_stop_loss_config = AvgPriceStopLossConfig.from_dict(
-                data.get('avg_price_stop_loss_config', {})
-            )
-            
-            # 加载网格层配置
-            for level_str, grid_config in data["grid_levels"].items():
-                level = int(level_str)
-                instance.grid_levels[level] = LevelConfig(
-                    interval_percent=Decimal(grid_config["interval_percent"]),
-                    open_rebound_percent=Decimal(grid_config["open_rebound_percent"]),
-                    close_rebound_percent=Decimal(grid_config["close_rebound_percent"]),
-                    take_profit_percent=Decimal(grid_config["take_profit_percent"]),
-                    invest_amount=Decimal(grid_config["invest_amount"]),
-                    filled_amount=(Decimal(grid_config["filled_amount"]) 
-                                if grid_config["filled_amount"] else None),
-                    filled_price=(Decimal(grid_config["filled_price"]) 
-                                if grid_config["filled_price"] else None),
-                    filled_time=(datetime.fromisoformat(grid_config["filled_time"]) 
-                            if grid_config["filled_time"] else None),
-                    is_filled=grid_config["is_filled"],
-                    order_id=grid_config["order_id"]
-                )
-                
-            print(f"[GridData] 反序列化完成:")
-            print(f"  网格层数: {len(instance.grid_levels)}")
-            print(f"  实现盈亏: {instance.total_realized_profit}")
-            return instance
-            
-        except Exception as e:
-            print(f"[GridData] 从字典创建实例失败: {e}")
-            print(f"[GridData] 错误详情: {traceback.format_exc()}")
-            raise
