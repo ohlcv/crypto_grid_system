@@ -208,35 +208,67 @@ class GridTable(QTableWidget):
                 uids.append(uid_item.text())
         return uids
 
+    def set_table_cell(self, row: int, col: int, value: str, editable: bool = False):
+        """设置表格单元格的值,同时处理居中对齐
+        
+        Args:
+            row: 行号
+            col: 列号 
+            value: 要设置的值
+            editable: 是否允许编辑
+        """
+        item = QTableWidgetItem(str(value))
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)  # 居中对齐
+        
+        if not editable:
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            
+        old_item = self.item(row, col)
+        if old_item:
+            # 保留原有的用户数据
+            user_data = old_item.data(Qt.ItemDataRole.UserRole + 1)
+            if user_data:
+                item.setData(Qt.ItemDataRole.UserRole + 1, user_data)
+                
+        self.setItem(row, col, item)
+
     def update_strategy_row(self, uid: str, grid_data: GridData):
+        """更新策略行数据"""
         try:
+            # 找到对应的行
             uid_col = GridColumnManager.get_column_index(GridColumn.UID)
             row = -1
             for i in range(self.rowCount()):
-                uid_item = self.item(i, uid_col)
-                if uid_item and uid_item.text() == uid:
+                if self.item(i, uid_col).text() == uid:
                     row = i
                     break
                     
             if row == -1:
                 print(f"[GridTable] 未找到策略行: {uid}")
                 return
+                
+            position_metrics = grid_data.calculate_position_metrics()
+            grid_status = grid_data.get_grid_status()
+                
+            # 更新各列数据
+            updates = {
+                GridColumn.STATUS: grid_data.status,
+                GridColumn.GRID_LEVEL: f"{grid_status['filled_levels']}/{grid_status['total_levels']}",
+                GridColumn.LAST_PRICE: str(grid_data.ticker_data.lastPr) if grid_data.ticker_data else "-",
+                GridColumn.AVG_PRICE: str(position_metrics['avg_price']),
+                GridColumn.POS_VALUE: str(position_metrics['total_value']),
+                GridColumn.POS_PNL: str(position_metrics['unrealized_pnl']),
+                GridColumn.REALIZED_PNL: str(grid_data.total_realized_profit),
+                # ... 其他需要更新的列
+            }
+            
+            for col, value in updates.items():
+                col_idx = GridColumnManager.get_column_index(col)
+                if col_idx >= 0:
+                    self.set_table_cell(row, col_idx, value)
                     
-            display_model = self.updater._display_models.get(uid)
-            if display_model:
-                display_model.update(grid_data)  # 更新显示模型
-                visible_columns = GridColumnManager.get_visible_columns()
-                for col in visible_columns:
-                    if col != GridColumn.OPERATIONS:
-                        value = display_model.get_value(col)
-                        display_value = "-" if value is None else str(value)
-                        item = QTableWidgetItem(display_value)
-                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                        col_idx = GridColumnManager.get_column_index(col)
-                        self.setItem(row, col_idx, item)
-                    else:
-                        self._update_operation_buttons(row, uid, grid_data.operations)
-                print(f"[GridTable] 策略行更新完成: UID={uid}")
+            # print(f"[GridTable] 更新策略行完成: {uid}")
+            
         except Exception as e:
             print(f"[GridTable] 更新策略行失败: {e}")
             print(f"[GridTable] 错误详情: {traceback.format_exc()}")

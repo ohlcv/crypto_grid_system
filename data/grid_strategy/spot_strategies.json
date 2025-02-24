@@ -1,5 +1,53 @@
 {
     "inst_type": "spot",
-    "strategies": {},
+    "strategies": {
+        "0cab40b6": {
+            "uid": "0cab40b6",
+            "symbol_config": {
+                "symbol": "BTCUSDT",
+                "pair": "BTC/USDT",
+                "base_coin": "BTC",
+                "quote_coin": "USDT",
+                "base_precision": 6,
+                "quote_precision": 8,
+                "price_precision": 2,
+                "min_base_amount": "0",
+                "min_quote_amount": "1"
+            },
+            "exchange": "bitget",
+            "inst_type": "spot",
+            "direction": "long",
+            "ticker_data": {
+                "instId": "BTCUSDT",
+                "lastPr": "95326.61",
+                "ts": 1740372368938
+            },
+            "total_realized_profit": "0",
+            "status": "已停止",
+            "operations": {
+                "开仓": true,
+                "平仓": true
+            },
+            "grid_levels": {},
+            "open_trigger_price": null,
+            "tp_trigger_price": null,
+            "take_profit_config": {
+                "enabled": false,
+                "profit_amount": null
+            },
+            "stop_loss_config": {
+                "enabled": false,
+                "loss_amount": null
+            },
+            "avg_price_take_profit_config": {
+                "enabled": false,
+                "profit_percent": null
+            },
+            "avg_price_stop_loss_config": {
+                "enabled": false,
+                "loss_percent": null
+            }
+        }
+    },
     "running_strategies": []
 }

@@ -70,9 +70,10 @@ class OrderState:
             self.current_level = None
 
 class GridTrader(QObject):
-    status_changed = Signal(str, str)
-    error_occurred = Signal(str, str)
-    save_requested = Signal(str)
+    # 定义信号
+    status_changed = Signal(str, str)  # uid, status
+    error_occurred = Signal(str, str)  # uid, error_msg 
+    save_requested = Signal(str)  # uid
 
     def __init__(self, manager: StrategyManagerInterface, uid: str):
         super().__init__()
@@ -82,15 +83,74 @@ class GridTrader(QObject):
         self._price_state = PriceState()
         self._order_state = OrderState()
         self._running = False
-        self._thread = None
+        self._thread = None 
         self._stop_flag = threading.Event()
         self._lock = threading.Lock()
-        self.logger = grid_logger  # 初始化 logger
-        self.trade_logger = trade_logger  # 初始化 trade_logger
-        # 可选：记录初始化的 grid_data 用于调试
-        grid_data = self.grid_data  # 通过 @property 获取
+        self.logger = grid_logger
+        self.trade_logger = trade_logger
+
+        # 每个交易器持有自己的信号,并保存它们的连接
+        self._error_connection = None
+        self._save_connection = None
+        
+        grid_data = self.grid_data
         if grid_data:
             print(f"[GridTrader] 初始化网格交易器 - uid: {uid}, pair: {grid_data.symbol_config.pair}, direction: {grid_data.direction}")
+
+    def connect_signals(self, error_slot, save_slot):
+        """连接信号到指定的槽函数"""
+        # 先断开旧连接
+        self.disconnect_signals()
+        
+        # 建立新连接
+        self._error_connection = self.error_occurred.connect(error_slot)
+        self._save_connection = self.save_requested.connect(save_slot)
+        
+    def disconnect_signals(self):
+        """断开所有信号连接"""
+        try:
+            if self._error_connection:
+                self.error_occurred.disconnect(self._error_connection)
+                self._error_connection = None
+        except TypeError:
+            pass
+            
+        try:
+            if self._save_connection:  
+                self.save_requested.disconnect(self._save_connection)
+                self._save_connection = None
+        except TypeError:
+            pass
+
+    def stop(self) -> bool:
+        """停止策略并清理连接"""
+        print(f"\n[GridTrader] === 停止策略 === {self.grid_data.uid}")
+        
+        if not self._running:
+            print("[GridTrader] 策略未在运行中")
+            self._thread = None
+            return True
+
+        self._stop_flag.set()
+        self._running = False
+
+        if self._thread and threading.current_thread().ident != self._thread.ident:
+            print(f"[GridTrader] 等待线程 {self._thread.name} 结束")
+            if self._thread.is_alive():
+                self._thread.join(timeout=2)
+            else:
+                print(f"[GridTrader] 线程 {self._thread.name} 已经结束，跳过 join 调用")
+        
+        self._thread = None
+        
+        # 断开信号连接
+        self.disconnect_signals()
+        
+        self.status_changed.emit(self.grid_data.uid, "已停止")
+        self.grid_data.status = "已停止"
+        self.grid_data.data_updated.emit(self.grid_data.uid)
+        print(f"[GridTrader] 策略已停止")
+        return True
 
     @property
     def grid_data(self) -> Optional[GridData]:
@@ -168,31 +228,6 @@ class GridTrader(QObject):
                 break
 
         print(f"[GridTrader] === 策略线程退出 ===")
-
-    def stop(self) -> bool:
-        print(f"\n[GridTrader] === 停止策略 === {self.grid_data.uid}")
-        
-        if not self._running:
-            print("[GridTrader] 策略未在运行中")
-            self._thread = None
-            return True
-
-        self._stop_flag.set()
-        self._running = False
-
-        if self._thread and threading.current_thread().ident != self._thread.ident:
-            print(f"[GridTrader] 等待线程 {self._thread.name} 结束")
-            if self._thread.is_alive():
-                self._thread.join(timeout=2)
-            else:
-                print(f"[GridTrader] 线程 {self._thread.name} 已经结束，跳过 join 调用")
-        
-        self._thread = None
-        self.status_changed.emit(self.grid_data.uid, "已停止")
-        self.grid_data.status = "已停止"
-        self.grid_data.data_updated.emit(self.grid_data.uid)
-        print(f"[GridTrader] 策略已停止")
-        return True
 
     def start(self) -> bool:
         print(f"\n[GridTrader] === 启动策略 === {self.grid_data.uid}")
