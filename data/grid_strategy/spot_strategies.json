@@ -1,16 +1,16 @@
 {
     "inst_type": "spot",
     "strategies": {
-        "0cab40b6": {
-            "uid": "0cab40b6",
+        "83039025": {
+            "uid": "83039025",
             "symbol_config": {
-                "symbol": "BTCUSDT",
-                "pair": "BTC/USDT",
-                "base_coin": "BTC",
+                "symbol": "TRUMPUSDT",
+                "pair": "TRUMP/USDT",
+                "base_coin": "TRUMP",
                 "quote_coin": "USDT",
-                "base_precision": 6,
-                "quote_precision": 8,
-                "price_precision": 2,
+                "base_precision": 2,
+                "quote_precision": 5,
+                "price_precision": 3,
                 "min_base_amount": "0",
                 "min_quote_amount": "1"
             },
@@ -18,34 +18,155 @@
             "inst_type": "spot",
             "direction": "long",
             "ticker_data": {
-                "instId": "BTCUSDT",
-                "lastPr": "95326.61",
-                "ts": 1740372368938
+                "instId": "TRUMPUSDT",
+                "lastPr": "15.014",
+                "ts": 1740373539931
             },
             "total_realized_profit": "0",
-            "status": "已停止",
+            "status": "运行中",
             "operations": {
                 "开仓": true,
                 "平仓": true
             },
-            "grid_levels": {},
-            "open_trigger_price": null,
-            "tp_trigger_price": null,
+            "grid_levels": {
+                "0": {
+                    "interval_percent": "0.5",
+                    "open_rebound_percent": "0.05",
+                    "close_rebound_percent": "0.05",
+                    "take_profit_percent": "0.5",
+                    "invest_amount": "1.2",
+                    "filled_amount": "0.07",
+                    "filled_price": "15.196",
+                    "filled_time": "2025-02-24T12:48:22.281000",
+                    "is_filled": true,
+                    "order_id": "1277780375657717760"
+                },
+                "1": {
+                    "interval_percent": "0.5",
+                    "open_rebound_percent": "0.05",
+                    "close_rebound_percent": "0.05",
+                    "take_profit_percent": "0.5",
+                    "invest_amount": "1.2",
+                    "filled_amount": "0.07",
+                    "filled_price": "15.118",
+                    "filled_time": "2025-02-24T12:56:59.152000",
+                    "is_filled": true,
+                    "order_id": "1277782543576014850"
+                },
+                "2": {
+                    "interval_percent": "0.5",
+                    "open_rebound_percent": "0.05",
+                    "close_rebound_percent": "0.05",
+                    "take_profit_percent": "0.5",
+                    "invest_amount": "1.2",
+                    "filled_amount": null,
+                    "filled_price": null,
+                    "filled_time": null,
+                    "is_filled": false,
+                    "order_id": null
+                },
+                "3": {
+                    "interval_percent": "0.5",
+                    "open_rebound_percent": "0.05",
+                    "close_rebound_percent": "0.05",
+                    "take_profit_percent": "0.5",
+                    "invest_amount": "1.2",
+                    "filled_amount": null,
+                    "filled_price": null,
+                    "filled_time": null,
+                    "is_filled": false,
+                    "order_id": null
+                },
+                "4": {
+                    "interval_percent": "0.5",
+                    "open_rebound_percent": "0.05",
+                    "close_rebound_percent": "0.05",
+                    "take_profit_percent": "0.5",
+                    "invest_amount": "1.2",
+                    "filled_amount": null,
+                    "filled_price": null,
+                    "filled_time": null,
+                    "is_filled": false,
+                    "order_id": null
+                },
+                "5": {
+                    "interval_percent": "0.5",
+                    "open_rebound_percent": "0.05",
+                    "close_rebound_percent": "0.05",
+                    "take_profit_percent": "0.5",
+                    "invest_amount": "1.2",
+                    "filled_amount": null,
+                    "filled_price": null,
+                    "filled_time": null,
+                    "is_filled": false,
+                    "order_id": null
+                },
+                "6": {
+                    "interval_percent": "0.5",
+                    "open_rebound_percent": "0.05",
+                    "close_rebound_percent": "0.05",
+                    "take_profit_percent": "0.5",
+                    "invest_amount": "1.2",
+                    "filled_amount": null,
+                    "filled_price": null,
+                    "filled_time": null,
+                    "is_filled": false,
+                    "order_id": null
+                },
+                "7": {
+                    "interval_percent": "0.5",
+                    "open_rebound_percent": "0.05",
+                    "close_rebound_percent": "0.05",
+                    "take_profit_percent": "0.5",
+                    "invest_amount": "1.2",
+                    "filled_amount": null,
+                    "filled_price": null,
+                    "filled_time": null,
+                    "is_filled": false,
+                    "order_id": null
+                },
+                "8": {
+                    "interval_percent": "0.5",
+                    "open_rebound_percent": "0.05",
+                    "close_rebound_percent": "0.05",
+                    "take_profit_percent": "0.5",
+                    "invest_amount": "1.2",
+                    "filled_amount": null,
+                    "filled_price": null,
+                    "filled_time": null,
+                    "is_filled": false,
+                    "order_id": null
+                },
+                "9": {
+                    "interval_percent": "0.5",
+                    "open_rebound_percent": "0.05",
+                    "close_rebound_percent": "0.05",
+                    "take_profit_percent": "0.5",
+                    "invest_amount": "1.2",
+                    "filled_amount": null,
+                    "filled_price": null,
+                    "filled_time": null,
+                    "is_filled": false,
+                    "order_id": null
+                }
+            },
+            "open_trigger_price": "15.042410",
+            "tp_trigger_price": "15.193590",
             "take_profit_config": {
-                "enabled": false,
-                "profit_amount": null
+                "enabled": true,
+                "profit_amount": 1.0
             },
             "stop_loss_config": {
-                "enabled": false,
-                "loss_amount": null
+                "enabled": true,
+                "loss_amount": 1.0
             },
             "avg_price_take_profit_config": {
-                "enabled": false,
-                "profit_percent": null
+                "enabled": true,
+                "profit_percent": 1.0
             },
             "avg_price_stop_loss_config": {
-                "enabled": false,
-                "loss_percent": null
+                "enabled": true,
+                "loss_percent": 1.0
             }
         }
     },

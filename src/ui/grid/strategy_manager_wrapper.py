@@ -431,6 +431,7 @@ class StrategyManagerWrapper(QObject):
                         continue
 
                 print(f"[StrategyManagerWrapper] 完成加载,共 {loaded_count} 个策略")
+                self.strategies_loaded.emit(f"已加载 {loaded_count} 个策略")
                 if show_message:
                     self.strategies_loaded.emit(f"已加载 {loaded_count} 个策略")
 

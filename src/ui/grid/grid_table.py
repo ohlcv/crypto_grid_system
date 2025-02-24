@@ -249,19 +249,35 @@ class GridTable(QTableWidget):
                 
             position_metrics = grid_data.calculate_position_metrics()
             grid_status = grid_data.get_grid_status()
+            tp_sl_prices = grid_data.calculate_avg_price_tp_sl_prices()
                 
             # 更新各列数据
             updates = {
                 GridColumn.STATUS: grid_data.status,
                 GridColumn.GRID_LEVEL: f"{grid_status['filled_levels']}/{grid_status['total_levels']}",
+                GridColumn.LAST_TIME: datetime.fromtimestamp(grid_data.ticker_data.ts / 1000).strftime("%H:%M:%S") if grid_data.ticker_data else "-",
                 GridColumn.LAST_PRICE: str(grid_data.ticker_data.lastPr) if grid_data.ticker_data else "-",
                 GridColumn.AVG_PRICE: str(position_metrics['avg_price']),
+                GridColumn.OPEN_TRIGGER: str(grid_data.open_trigger_price) if grid_data.open_trigger_price else "-",
+                GridColumn.TP_TRIGGER: str(grid_data.tp_trigger_price) if grid_data.tp_trigger_price else "-",
+                GridColumn.ATP_TRIGGER: str(tp_sl_prices['avg_tp_price']) if tp_sl_prices['avg_tp_price'] else "-",
+                GridColumn.ASL_TRIGGER: str(tp_sl_prices['avg_sl_price']) if tp_sl_prices['avg_sl_price'] else "-",
+                GridColumn.AVG_TP: str(grid_data.avg_price_take_profit_config.profit_percent) if grid_data.avg_price_take_profit_config.enabled else "-",
+                GridColumn.AVG_SL: str(grid_data.avg_price_stop_loss_config.loss_percent) if grid_data.avg_price_stop_loss_config.enabled else "-",
+                GridColumn.TOTAL_TP: str(grid_data.take_profit_config.profit_amount) if grid_data.take_profit_config.enabled else "-",
+                GridColumn.TOTAL_SL: str(grid_data.stop_loss_config.loss_amount) if grid_data.stop_loss_config.enabled else "-",
                 GridColumn.POS_VALUE: str(position_metrics['total_value']),
                 GridColumn.POS_PNL: str(position_metrics['unrealized_pnl']),
                 GridColumn.REALIZED_PNL: str(grid_data.total_realized_profit),
-                # ... 其他需要更新的列
             }
-            
+
+            # 更新操作开关状态
+            ops_col = GridColumnManager.get_column_index(GridColumn.OPERATIONS)
+            operation_widget = self.cellWidget(row, ops_col)
+            if operation_widget:
+                self._update_operation_buttons(row, uid, grid_data.operations)
+
+            # 更新其他列数据
             for col, value in updates.items():
                 col_idx = GridColumnManager.get_column_index(col)
                 if col_idx >= 0:
@@ -272,7 +288,7 @@ class GridTable(QTableWidget):
         except Exception as e:
             print(f"[GridTable] 更新策略行失败: {e}")
             print(f"[GridTable] 错误详情: {traceback.format_exc()}")
-
+            
     def show_context_menu(self, position):
         index = self.indexAt(position)
         if not index.isValid():
