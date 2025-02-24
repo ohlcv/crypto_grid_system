@@ -19,8 +19,8 @@
             "direction": "long",
             "ticker_data": {
                 "instId": "TRUMPUSDT",
-                "lastPr": "15.014",
-                "ts": 1740373539931
+                "lastPr": "14.737",
+                "ts": 1740409088445
             },
             "total_realized_profit": "0",
             "status": "运行中",
@@ -59,11 +59,11 @@
                     "close_rebound_percent": "0.05",
                     "take_profit_percent": "0.5",
                     "invest_amount": "1.2",
-                    "filled_amount": null,
-                    "filled_price": null,
-                    "filled_time": null,
-                    "is_filled": false,
-                    "order_id": null
+                    "filled_amount": "0.07",
+                    "filled_price": "10.018",
+                    "filled_time": "2025-02-24T13:05:53.618000",
+                    "is_filled": true,
+                    "order_id": "1277784785284702209"
                 },
                 "3": {
                     "interval_percent": "0.5",
@@ -150,23 +150,23 @@
                     "order_id": null
                 }
             },
-            "open_trigger_price": "15.042410",
-            "tp_trigger_price": "15.193590",
+            "open_trigger_price": null,
+            "tp_trigger_price": null,
             "take_profit_config": {
-                "enabled": true,
-                "profit_amount": 1.0
+                "enabled": false,
+                "profit_amount": null
             },
             "stop_loss_config": {
-                "enabled": true,
-                "loss_amount": 1.0
+                "enabled": false,
+                "loss_amount": null
             },
             "avg_price_take_profit_config": {
-                "enabled": true,
-                "profit_percent": 1.0
+                "enabled": false,
+                "profit_percent": null
             },
             "avg_price_stop_loss_config": {
-                "enabled": true,
-                "loss_percent": 1.0
+                "enabled": false,
+                "loss_percent": null
             }
         }
     },

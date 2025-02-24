@@ -149,9 +149,9 @@ class StopLossConfig:
 class LevelConfig:
     """网格层配置"""
     interval_percent: Decimal  # 间隔百分比
+    take_profit_percent: Decimal  # 止盈百分比
     open_rebound_percent: Decimal  # 开仓反弹百分比
     close_rebound_percent: Decimal  # 平仓反弹百分比
-    take_profit_percent: Decimal  # 止盈百分比
     invest_amount: Decimal  # 投资金额
     filled_amount: Optional[Decimal] = None  # 成交数量
     filled_price: Optional[Decimal] = None  # 成交价格
@@ -589,7 +589,7 @@ class GridData(QObject):
         """检查是否达到总体止盈条件（使用累计已实现盈利）"""
         if not self.take_profit_config.enabled or self.take_profit_config.profit_amount is None:
             return False
-        return self.total_realized_profit - unrealized_pnl >= self.take_profit_config.profit_amount
+        return self.total_realized_profit + unrealized_pnl >= self.take_profit_config.profit_amount
         
     def _check_stop_loss_condition(self, unrealized_pnl: Decimal) -> bool:
         """检查是否达到总体止损条件（使用总浮动亏损）"""
@@ -614,13 +614,11 @@ class GridData(QObject):
         # 检查均价止盈条件
         if self.avg_price_take_profit_config.enabled and self.avg_price_take_profit_config.profit_percent:
             if price_change_percent >= self.avg_price_take_profit_config.profit_percent:
-                self._close_all_positions("触发均价止盈")
                 return True
                 
         # 检查均价止损条件
         if self.avg_price_stop_loss_config.enabled and self.avg_price_stop_loss_config.loss_percent:
             if price_change_percent <= -self.avg_price_stop_loss_config.loss_percent:
-                self._close_all_positions("触发均价止损")
                 return True
                 
         return False
